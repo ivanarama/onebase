@@ -48,6 +48,32 @@ func withLang(ctx context.Context, lang string) context.Context {
 	return context.WithValue(ctx, langCtxKeyT{}, lang)
 }
 
+// dslCurrentUserObject — объект ТекущийПользователь() для DSL:
+// {ИД, Имя, ПолноеИмя, Админ, Ссылка} и английские синонимы, плюс логин для
+// ИмяПользователя(). Один источник для полного окружения модулей и для
+// ограниченных (choice_preview_proc, choice_row_style.for_user.func): иначе
+// ТекущийПользователь().Имя в ограниченном окружении молча давал пустое
+// значение. Без пользователя (фоновое задание) — пустые поля, пустая Ссылка.
+func dslCurrentUserObject(ctx context.Context) (*interpreter.MapThis, string) {
+	var id, login, fullName string
+	var admin bool
+	ref := &interpreter.Ref{Type: metadata.SystemUsersEntity}
+	if u := auth.UserFromContext(ctx); u != nil {
+		id, login, fullName, admin = u.ID, u.Login, u.FullName, u.IsAdmin
+		label := u.FullName
+		if label == "" {
+			label = u.Login
+		}
+		ref = &interpreter.Ref{UUID: u.ID, Name: label, Type: metadata.SystemUsersEntity}
+	}
+	return &interpreter.MapThis{M: map[string]any{
+		"ИД": id, "Имя": login, "ПолноеИмя": fullName, "Админ": admin,
+		"Ссылка": ref,
+		"ID":     id, "Login": login, "FullName": fullName, "IsAdmin": admin,
+		"Ref": ref,
+	}}, login
+}
+
 // langFromCtx достаёт язык, положенный withLang; "" — если контекст его не несёт.
 func langFromCtx(ctx context.Context) string {
 	if v, ok := ctx.Value(langCtxKeyT{}).(string); ok {
@@ -143,23 +169,7 @@ func (s *Server) buildDSLVarsTx(ctx context.Context, mc *runtime.MovementsCollec
 	// её можно писать в реквизит типа reference:_users и искать по ней элемент
 	// справочника сотрудников через НайтиПоРеквизиту("УчётнаяЗапись", …).
 	// Для фоновых заданий ссылка пустая — ЗначениеЗаполнено() = Ложь.
-	var curUserID, curUserLogin, curUserFullName string
-	var curUserAdmin bool
-	curUserRef := &interpreter.Ref{Type: metadata.SystemUsersEntity}
-	if u := auth.UserFromContext(ctx); u != nil {
-		curUserID, curUserLogin, curUserFullName, curUserAdmin = u.ID, u.Login, u.FullName, u.IsAdmin
-		label := u.FullName
-		if label == "" {
-			label = u.Login
-		}
-		curUserRef = &interpreter.Ref{UUID: u.ID, Name: label, Type: metadata.SystemUsersEntity}
-	}
-	userObj := &interpreter.MapThis{M: map[string]any{
-		"ИД": curUserID, "Имя": curUserLogin, "ПолноеИмя": curUserFullName, "Админ": curUserAdmin,
-		"Ссылка": curUserRef,
-		"ID":     curUserID, "Login": curUserLogin, "FullName": curUserFullName, "IsAdmin": curUserAdmin,
-		"Ref": curUserRef,
-	}}
+	userObj, curUserLogin := dslCurrentUserObject(ctx)
 	currentUserFn := interpreter.BuiltinFunc(func(_ []any, _ string, _ int) (any, error) {
 		return userObj, nil
 	})

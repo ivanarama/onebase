@@ -39,9 +39,8 @@ const (
 	ProcessorModeMap = "map"
 	// ProcessorModeExplicitAllowAll — processors_default: allow.
 	ProcessorModeExplicitAllowAll = "explicit-allow-all"
-	// ProcessorModeImplicitAllowAll — секции нет; переходный срез A плана 162
-	// сохраняет allow-all, срез C сменит его на запрет.
-	ProcessorModeImplicitAllowAll = "implicit-allow-all"
+	// ProcessorModeImplicitDeny — отсутствующая/null-секция запрещает обработки.
+	ProcessorModeImplicitDeny = "implicit-deny"
 )
 
 // Role is a named set of permissions.
@@ -270,8 +269,7 @@ func (u *User) Has(kind, entity, op string) bool {
 
 // ProcessorPermissionMode возвращает эффективный режим прав на обработки
 // одной роли (план 162): явная карта, осознанный compatibility allow-all или
-// неявное allow-all отсутствующей секции. В переходном срезе A последние два
-// дают одинаковый доступ; различает их только диагностика lint.
+// запрет отсутствующей секции. Глобальный доступ требует явного allow.
 func ProcessorPermissionMode(p Permission) string {
 	if p.Processors != nil {
 		return ProcessorModeMap
@@ -279,7 +277,7 @@ func ProcessorPermissionMode(p Permission) string {
 	if strings.TrimSpace(p.ProcessorsDefault) == "allow" {
 		return ProcessorModeExplicitAllowAll
 	}
-	return ProcessorModeImplicitAllowAll
+	return ProcessorModeImplicitDeny
 }
 
 // processorAllows — единая точка решения по обработкам: User.Has и
@@ -294,10 +292,9 @@ func processorAllows(p Permission, entity, op string) bool {
 		}
 		return false
 	}
-	// Переходный срез A плана 162: отсутствие секции пока разрешает все
-	// обработки — и неявно, и через осознанный processors_default: allow.
-	// Срез C в объявленном минорном релизе сменит неявное умолчание на запрет.
-	return true
+	// Отсутствие прав не разрешает запуск. Прежний глобальный доступ
+	// сохраняется только через осознанный processors_default: allow.
+	return ProcessorPermissionMode(p) == ProcessorModeExplicitAllowAll
 }
 
 func PermissionHas(p Permission, kind, entity, op string) bool {
