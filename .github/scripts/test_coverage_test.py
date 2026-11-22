@@ -34,7 +34,7 @@ if args == ['list', './...']:
     if mode == 'duplicate-package': print(ui)
     sys.exit(0)
 assert args[0] == 'test'
-assert all(flag in args for flag in ['-race', '-count=1', '-timeout=10m', '-json'])
+assert all(flag in args for flag in ['-race', '-count=1', '-timeout=20m', '-json'])
 def emit(action, package, **kw):
     print(json.dumps(dict(Action=action, Package=package, **kw)))
 names = ['TestAlpha', 'TestBravo', 'TestCharlie', 'TestDelta', 'ExampleValue', 'FuzzSeed']
