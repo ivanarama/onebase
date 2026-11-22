@@ -234,11 +234,11 @@ type AppConfig struct {
 	// конфигурацией по той же причине, что и Author: поставка клиенту несёт
 	// СВОЮ поддержку, а не трекер разработчика платформы, до которого
 	// пользователь не дойдёт и куда ему не надо.
-	Support     string             `yaml:"support,omitempty"`
-	Lang        string             `yaml:"lang,omitempty"`
-	Logo        string             `yaml:"logo,omitempty"`
+	Support string `yaml:"support,omitempty"`
+	Lang    string `yaml:"lang,omitempty"`
+	Logo    string `yaml:"logo,omitempty"`
 	// UI — оформление интерфейса всей базы (list_density и др.).
-	UI *UIConfig `yaml:"ui,omitempty"`
+	UI          *UIConfig          `yaml:"ui,omitempty"`
 	Email       *EmailConfig       `yaml:"email,omitempty"`
 	Attachments *AttachmentsConfig `yaml:"attachments,omitempty"`
 	// DeprecatedRussianPost preserves the permissive v0.9.3 behavior for
