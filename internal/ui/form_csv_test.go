@@ -5,8 +5,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/processor"
+	"github.com/shopspring/decimal"
 )
 
 func TestProcessorFormCSVDownload(t *testing.T) {
@@ -76,5 +78,25 @@ func TestProcessorFormCSVDownloadEmptyCell(t *testing.T) {
 	rows, err := reader.ReadAll()
 	if err != nil || len(rows) != 3 || rows[0][0] != "Комментарий" || rows[1][0] != "" || rows[2][0] != "Заполнено" {
 		t.Fatalf("read CSV: %+v, %v", rows, err)
+	}
+}
+
+func TestProcessorFormCSVDownloadReferencePresentationIsText(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		value any
+		want  string
+	}{
+		{"reference", &interpreter.Ref{Name: " =1+1"}, "' =1+1"},
+		{"ordinary reference", &interpreter.Ref{Name: "Мастер"}, "Мастер"},
+		{"text", "-12", "'-12"},
+		{"decimal", decimal.New(-125, -1), "-12.5"},
+		{"integer", -12, "-12"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := formCSVCell(tc.value); got != tc.want {
+				t.Fatalf("CSV cell = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }

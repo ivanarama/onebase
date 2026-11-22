@@ -12,6 +12,7 @@ import (
 
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/metadata"
+	"github.com/shopspring/decimal"
 )
 
 type listProcessorLink struct {
@@ -116,13 +117,15 @@ func formCSVCell(value any) string {
 			return "Да"
 		}
 		return "Нет"
-	case string:
-		trimmed := strings.TrimLeftFunc(v, unicode.IsSpace)
-		if trimmed != "" && strings.ContainsRune("=+-@", rune(trimmed[0])) {
-			return "'" + v
-		}
-		return v
-	default:
+	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64,
+		float32, float64, decimal.Decimal, *decimal.Decimal:
 		return fmt.Sprint(v)
 	}
+	// References and other objects can supply user-controlled display text.
+	text := fmt.Sprint(value)
+	trimmed := strings.TrimLeftFunc(text, unicode.IsSpace)
+	if trimmed != "" && strings.ContainsRune("=+-@", rune(trimmed[0])) {
+		return "'" + text
+	}
+	return text
 }
