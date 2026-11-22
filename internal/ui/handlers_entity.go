@@ -225,6 +225,7 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 		"NextPage":         page + 1,
 		"EnumLabels":       s.buildEnumLabels(entity, lang),
 		"BasedOnActions":   s.basedOnActions(r, entity, lang),
+		"ProcessorLinks":   s.listProcessorLinks(r, entity, lang),
 		"RequestURI":       r.URL.RequestURI(),
 		"ListFormToggles":  s.listFormFilterToggles(r, entity),
 		"ListFormOff":      r.URL.Query().Get(listFormFilterOffParam),
