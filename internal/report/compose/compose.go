@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/shopspring/decimal"
 
@@ -560,6 +561,8 @@ func aggMeasure(rows []Row, m report.Measure) any {
 				key = "text:" + x
 			case []byte:
 				key = "text:" + string(x)
+			case time.Time:
+				key = "date:" + x.UTC().Format(time.RFC3339Nano)
 			default:
 				if d, ok := toDecimal(v); ok {
 					key = "number:" + d.String()
