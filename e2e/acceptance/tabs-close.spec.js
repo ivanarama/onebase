@@ -250,3 +250,100 @@ for (const sameURL of [false, true]) {
     } finally { await held.finish(); }
   });
 }
+
+for (const choice of ['cancel', 'save', 'discard']) {
+  test(`tab close: a command preserves the dirty duplicate until ${choice}`, async ({ page }) => {
+    const seed = await openForm(page);
+    const held = await holdSave(page, seed, `original ${choice}`);
+    let id;
+    try {
+      id = held.data.savedId;
+      held.release();
+      await expect(frames(page)).toHaveCount(0);
+    } finally { await held.finish(); }
+    closes = [];
+    const source = await openForm(page, id);
+    await page.locator('.ob-tab-dup').click();
+    await expect(frames(page)).toHaveCount(2);
+    const duplicate = await (await frames(page).last().elementHandle()).contentFrame();
+    await duplicate.waitForLoadState('domcontentloaded');
+    const draft = `UNSAVED-DUPLICATE-DRAFT-2429-${choice}`;
+    await duplicate.locator('input[name="Наименование"]').fill(draft);
+    await page.locator('.ob-tab').first().click();
+    await source.locator('[data-ob-el="Закрыть"]').click();
+    await expect(duplicate.locator('#ob-managed-close-confirm')).toBeVisible();
+    await expect(duplicate.locator('input[name="Наименование"]')).toHaveValue(draft);
+    await duplicate.locator(`[data-ob-close-choice="${choice}"]`).click();
+    if (choice === 'cancel') {
+      await expect(duplicate.locator('#ob-managed-close-confirm')).toHaveCount(0);
+      expect(duplicate.isDetached()).toBe(false);
+      await expect(duplicate.locator('input[name="Наименование"]')).toHaveValue(draft);
+      expect(await (await page.request.get(ROOT + id)).text()).not.toContain(draft);
+    } else {
+      await expect.poll(() => duplicate.isDetached()).toBe(true);
+      await expect.poll(() => closes.length).toBeGreaterThan(0);
+      const body = await (await page.request.get(ROOT + id)).text();
+      if (choice === 'save') expect(body).toContain(draft);
+      else expect(body).not.toContain(draft);
+    }
+  });
+}
+
+test('tab close: dirty processor command closes its source and asks its independent duplicate', async ({ page }) => {
+  const url = '/ui/processor/ПриемкаКомандыЗакрытия';
+  await page.evaluate(url => window.obOpenTab(url, 'Обработка'), url);
+  const source = await (await frames(page).last().elementHandle()).contentFrame();
+  await source.waitForLoadState('domcontentloaded');
+  await source.locator('input[name="Текст"]').fill('source parameters');
+  await page.locator('.ob-tab-dup').click();
+  const duplicate = await (await frames(page).last().elementHandle()).contentFrame();
+  await duplicate.waitForLoadState('domcontentloaded');
+  await duplicate.locator('input[name="Текст"]').fill('independent parameters');
+  await page.locator('.ob-tab').first().click();
+  await source.locator('[data-ob-el="Закрыть"]').click();
+  await expect.poll(() => source.isDetached()).toBe(true);
+  await expect(duplicate.locator('#ob-managed-close-confirm')).toBeVisible();
+  await duplicate.locator('[data-ob-close-choice="cancel"]').click();
+  await expect(duplicate.locator('input[name="Текст"]')).toHaveValue('independent parameters');
+  await expect(frames(page)).toHaveCount(1);
+  // A repeated real command from a newly opened copy must not consume the
+  // refusal as permission to discard the remaining dirty document.
+  await page.locator('.ob-tab-dup').click();
+  const retry = await (await frames(page).last().elementHandle()).contentFrame();
+  await retry.waitForLoadState('domcontentloaded');
+  await retry.locator('[data-ob-el="Закрыть"]').click();
+  await expect(duplicate.locator('#ob-managed-close-confirm')).toBeVisible();
+  await duplicate.locator('[data-ob-close-choice="cancel"]').click();
+  await expect(duplicate.locator('input[name="Текст"]')).toHaveValue('independent parameters');
+});
+
+test('tab close: source input made after the handler snapshot still needs confirmation', async ({ page }) => {
+  await page.evaluate(() => window.obOpenTab('/ui/processor/ПриемкаКомандыЗакрытия', 'Обработка'));
+  const source = await (await frames(page).last().elementHandle()).contentFrame();
+  await source.waitForLoadState('domcontentloaded');
+  await source.locator('input[name="Текст"]').fill('sent snapshot');
+  let release, received;
+  const barrier = new Promise(resolve => { release = resolve; });
+  const responseReady = new Promise(resolve => { received = resolve; });
+  const handler = async route => {
+    const response = await route.fetch();
+    received();
+    await barrier;
+    await route.fulfill({ response });
+  };
+  await page.route('**/form-event', handler);
+  try {
+    await source.locator('[data-ob-el="Закрыть"]').click();
+    await responseReady;
+    await expect.poll(() => page.evaluate(() => window.closeAcceptance.commands.length)).toBe(1);
+    await source.locator('input[name="Текст"]').fill('newer unsaved input');
+    release();
+    await expect(source.locator('#ob-managed-close-confirm')).toBeVisible();
+    await source.locator('[data-ob-close-choice="cancel"]').click();
+    await expect(source.locator('input[name="Текст"]')).toHaveValue('newer unsaved input');
+    await expect(frames(page)).toHaveCount(1);
+  } finally {
+    release();
+    await page.unroute('**/form-event', handler);
+  }
+});
