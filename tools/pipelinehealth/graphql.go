@@ -17,6 +17,8 @@ import (
 	"unicode/utf8"
 )
 
+// Keep root pages small: each node also loads label and comment connections.
+// Cursor pagination below still reads every PR, issue and nested comment.
 const pipelineHealthSnapshotQuery = `
 query PipelineHealthSnapshot(
   $owner: String!
@@ -31,7 +33,7 @@ query PipelineHealthSnapshot(
     nameWithOwner
     pullRequests(
       states: OPEN
-      first: 100
+      first: 20
       after: $pullCursor
       orderBy: {field: CREATED_AT, direction: ASC}
     ) @include(if: $includePulls) {
@@ -64,6 +66,7 @@ query PipelineHealthSnapshot(
             fullDatabaseId
             createdAt
             updatedAt
+            lastEditedAt
             author { login }
             body
           }
@@ -77,7 +80,7 @@ query PipelineHealthSnapshot(
     }
     issues(
       states: OPEN
-      first: 100
+      first: 20
       after: $issueCursor
       orderBy: {field: CREATED_AT, direction: ASC}
     ) @include(if: $includeIssues) {
@@ -102,6 +105,7 @@ query PipelineHealthSnapshot(
             fullDatabaseId
             createdAt
             updatedAt
+            lastEditedAt
             author { login }
             body
           }
@@ -135,6 +139,7 @@ query PipelineHealthNodePage(
           fullDatabaseId
           createdAt
           updatedAt
+          lastEditedAt
           author { login }
           body
         }
@@ -153,6 +158,7 @@ query PipelineHealthNodePage(
           fullDatabaseId
           createdAt
           updatedAt
+          lastEditedAt
           author { login }
           body
         }
@@ -213,6 +219,7 @@ type pipelineGraphQLClient interface {
 // shell. GraphQL errors are parsed even when gh exits non-zero: partial data is
 // never accepted as a queue snapshot.
 type ghPipelineGraphQLClient struct {
+	sourceCost     *sourceGraphQLMeter
 	strictIdentity bool
 	executable     string
 	timeout        time.Duration
@@ -306,6 +313,13 @@ func newGHPipelineGraphQLClient() *ghPipelineGraphQLClient {
 }
 
 func (client *ghPipelineGraphQLClient) Query(query string, variables map[string]any, destination any) error {
+	if client.sourceCost != nil {
+		return client.queryWithSourceCost(query, variables, destination)
+	}
+	return client.queryUnmetered(query, variables, destination)
+}
+
+func (client *ghPipelineGraphQLClient) queryUnmetered(query string, variables map[string]any, destination any) error {
 	payload, err := json.Marshal(struct {
 		Query     string         `json:"query"`
 		Variables map[string]any `json:"variables"`
@@ -359,6 +373,11 @@ func (client *ghPipelineGraphQLClient) Query(query string, variables map[string]
 	}
 	if client.strictIdentity {
 		if err := validateIdentityJSON(stdout.Bytes()); err != nil {
+			return err
+		}
+	}
+	if client.sourceCost != nil {
+		if err := validateSourceGraphQLEnvelope(stdout.Bytes()); err != nil {
 			return err
 		}
 	}
@@ -505,6 +524,7 @@ type gqlComment struct {
 	FullDatabaseID string    `json:"fullDatabaseId"`
 	CreatedAt      string    `json:"createdAt"`
 	UpdatedAt      string    `json:"updatedAt"`
+	LastEditedAt   *string   `json:"lastEditedAt"`
 	Author         *gqlActor `json:"author"`
 	Body           string    `json:"body"`
 }
@@ -525,6 +545,14 @@ func (comment *gqlComment) UnmarshalJSON(data []byte) error {
 	} {
 		if err := decodeGQLRequired(fields, field.name, field.destination); err != nil {
 			return err
+		}
+	}
+	if err := decodeGQLNullable(fields, "lastEditedAt", &comment.LastEditedAt); err != nil {
+		return err
+	}
+	if comment.LastEditedAt != nil {
+		if _, err := time.Parse(time.RFC3339, *comment.LastEditedAt); err != nil {
+			return fmt.Errorf("invalid comment lastEditedAt: %w", err)
 		}
 	}
 	return decodeGQLNullable(fields, "author", &comment.Author)
@@ -1535,7 +1563,8 @@ func convertGQLComments(raw []gqlComment) ([]apiComment, error) {
 		}
 		comments = append(comments, apiComment{
 			ID: id, CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt,
-			User: apiUser{Login: login}, Body: item.Body,
+			lastEditedAt: item.LastEditedAt,
+			User:         apiUser{Login: login}, Body: item.Body,
 		})
 	}
 	return comments, nil
