@@ -119,6 +119,7 @@ type Server struct {
 	extprocessors        *extform.ProcessorRepo // внешний контур: обработки из БД
 	tmpl                 *template.Template
 	hub                  *realtime.Hub // real-time-шина уведомлений сервер→браузер (план 74)
+	formIdleState                      // подпись обработчиков ожидания форм (form_idle.go)
 	devGeneration        string        // метка запуска процесса для dev-режима (см. eventsStream)
 	ops                  *operationLimiter
 	exportJobsMu         sync.Mutex
