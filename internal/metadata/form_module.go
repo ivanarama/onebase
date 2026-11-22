@@ -259,6 +259,13 @@ type FormElement struct {
 	// Оба каскадят на потомков контейнера, как и постоянный ReadOnly (#1184).
 	// Складывается это по «ИЛИ»: ложное условие предка не отпирает потомка с
 	// собственным ReadOnly.
+	// TextBold — жирное значение поля (ПолеВвода, ПолеДаты) или текст
+	// надписи: выделить главное на форме — имя клиента в заявке. Подпись поля
+	// остаётся обычной.
+	TextBold bool `yaml:"text_bold,omitempty"`
+
+	// LabelColor задаёт цвет подписи элемента ПолеВвода.
+	LabelColor   string `yaml:"label_color,omitempty"`
 	ReadOnlyWhen string `yaml:"readonly_when,omitempty"`
 	HiddenWhen   string `yaml:"hidden_when,omitempty"`
 	// TitleFrom — у колонки табличной части (kind: Колонка): имя реквизита
@@ -314,6 +321,8 @@ type FormElement struct {
 	// первые N записей, и оператор выбирает из них, не подозревая, что видит не
 	// весь список. Указатель отличает явное false от отсутствующего ключа.
 	ChoiceDropdown *bool `yaml:"choice_dropdown,omitempty"`
+	// ReferencePage opens a custom page with the selected reference UUID in ?ref= instead of its card.
+	ReferencePage string `yaml:"reference_page,omitempty"`
 	// RefCardButton — показывать ли у ЭТОГО ссылочного поля кнопку «Открыть
 	// карточку» (🔍). Явное значение у поля сильнее обоих ключей формы
 	// (ref_card_button и ref_card_button_admin_only) в обе стороны: может и
@@ -702,7 +711,7 @@ type FormModule struct {
 	Procedures map[string]*FormProcedure `yaml:"-"`
 
 	// Actions — переопределение стандартных действий формы объекта. Ключи
-	// delete/save/ok/close управляют видимостью платформенных кнопок, а
+	// delete/save/ok/close/copy управляют видимостью платформенных кнопок, а
 	// attachments — панелью вложений (plan 181C, #1621); права и серверные
 	// проверки они не ослабляют.
 	Actions map[string]*FormAction `yaml:"actions,omitempty"`
@@ -743,6 +752,8 @@ type FormModule struct {
 	// по реквизиту связанной записи. Значение — литерал или @ТекущийПользователь
 	// (идентификатор учётной записи смотрящего).
 	ListFilter []FormListCondition `yaml:"filter,omitempty"`
+	// ListProcessors adds links to runnable processors in the list toolbar.
+	ListProcessors []FormListProcessor `yaml:"list_processors,omitempty"`
 
 	// RefCardButtonAdminOnly — кнопку «Открыть карточку» видит только
 	// администратор (#1876). Оператору справочники вести не положено, и лупа у
@@ -790,6 +801,11 @@ type FormModule struct {
 	// чтобы новые id из редактора не пересекались с диапазоном 1С.
 	idCounter int        `yaml:"-"`
 	idMu      sync.Mutex `yaml:"-"`
+}
+
+type FormListProcessor struct {
+	Name  string            `yaml:"name"`
+	Title map[string]string `yaml:"title,omitempty"`
 }
 
 // FormListCondition — одно условие постоянного отбора формы списка.

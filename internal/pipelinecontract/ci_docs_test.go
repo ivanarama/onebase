@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"slices"
 	"strings"
@@ -13,7 +14,8 @@ import (
 )
 
 type docsCIWorkflow struct {
-	On map[string]struct {
+	Env map[string]string
+	On  map[string]struct {
 		Paths       []string `yaml:"paths"`
 		PathsIgnore []string `yaml:"paths-ignore"`
 		Types       []string `yaml:"types"`
@@ -22,13 +24,18 @@ type docsCIWorkflow struct {
 }
 
 type docsCIJob struct {
+	Env      map[string]string
 	Name     string
 	Needs    []string
 	If       string
 	RunsOn   string `yaml:"runs-on"`
 	Outputs  map[string]string
 	Services map[string]struct{ Image string }
-	Steps    []struct {
+	Strategy struct {
+		FailFast *bool `yaml:"fail-fast"`
+		Matrix   struct{ Shard []string }
+	}
+	Steps []struct {
 		ID   string
 		Name string
 		Uses string
@@ -67,6 +74,7 @@ func TestCIDocsRequiredStatusesAndFallback(t *testing.T) {
 	lightBuild := map[string]bool{
 		"actions/checkout@v4": true, "actions/setup-go@v5": true,
 		"Check for UTF-8 BOM in .go files": true, "Plan numbers are unique": true,
+		"Require every race shard": true, // A small result gate, not a test/workload bypass.
 	}
 	for _, id := range append(branchProtectionContexts(t), "smoke_matrix", "bench") {
 		job, ok := w.Jobs[id]
@@ -81,6 +89,10 @@ func TestCIDocsRequiredStatusesAndFallback(t *testing.T) {
 			continue
 		}
 		wantIf := "${{ always() && !cancelled() }}"
+		if id == "build" || id == "postgres-integration" {
+			// Unlike the workers, the required aggregate must also reject cancellation.
+			wantIf = "${{ always() }}"
+		}
 		if id == "bench" {
 			wantIf = "${{ always() && !cancelled() && github.event_name == 'pull_request' }}"
 		}
@@ -96,6 +108,12 @@ func TestCIDocsRequiredStatusesAndFallback(t *testing.T) {
 			if id == "build" && step.Name == "Check commit closing references" {
 				if step.If != "${{ github.event_name == 'pull_request' }}" {
 					t.Fatal("closing-reference gate must run for every PR, including docs-only")
+				}
+				continue
+			}
+			if id == "postgres-integration" && step.Name == "Require every PostgreSQL shard" {
+				if step.If != "" {
+					t.Fatal("required PostgreSQL result gate must always execute")
 				}
 				continue
 			}
@@ -124,9 +142,6 @@ func TestCIDocsRequiredStatusesAndFallback(t *testing.T) {
 			t.Errorf("%s allocates Windows for docs-only or loses the original code runner", id)
 		}
 	}
-	if w.Jobs["postgres-integration"].Services["postgres"].Image != "${{ ("+full+") && 'postgres:16' || '' }}" {
-		t.Fatal("docs-only must not start PostgreSQL; a failed classifier must start it")
-	}
 	classify := w.Jobs["classify"]
 	if classify.Outputs["mode"] != "${{ steps.diff.outputs.mode }}" || len(classify.Steps) != 4 ||
 		classify.Steps[0].Uses != "actions/checkout@v4" || classify.Steps[0].With["fetch-depth"] != "0" {
@@ -136,6 +151,125 @@ func TestCIDocsRequiredStatusesAndFallback(t *testing.T) {
 	if step.ID != "diff" || step.Env["BASE_SHA"] != "${{ github.event.pull_request.base.sha }}" ||
 		step.Env["HEAD_SHA"] != "${{ github.event.pull_request.head.sha }}" || step.Env["EVENT_NAME"] != "${{ github.event_name }}" {
 		t.Fatal("classification must use immutable event SHAs, not movable refs")
+	}
+}
+
+func TestCIPostgresMatrix(t *testing.T) {
+	w := docsWorkflow(t)
+	workers := w.Jobs["postgres-tests"]
+	full := "needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs'"
+	if workers.If != "${{ always() && !cancelled() && ("+full+") }}" ||
+		!slices.Equal(workers.Needs, []string{"classify"}) ||
+		workers.Strategy.FailFast == nil || *workers.Strategy.FailFast ||
+		!slices.Equal(workers.Strategy.Matrix.Shard, []string{"packages", "ui-1", "ui-2", "ui-3", "ui-4"}) ||
+		workers.Services["postgres"].Image != "postgres:16" || workers.Env["TEST_DATABASE_URL"] == "" {
+		t.Fatal("full CI needs every matrix worker with its own PostgreSQL service; docs-only skips the matrix")
+	}
+	packages, ui := false, false
+	for _, step := range workers.Steps {
+		if step.Name == "PostgreSQL integration tests" {
+			packages = step.If == "${{ matrix.shard == 'packages' }}" &&
+				strings.Contains(step.Run, "./internal/backup") && strings.Contains(step.Run, "./internal/api")
+		}
+		if step.Name == "Run UI shard on SQLite and PostgreSQL" {
+			ui = step.If == "${{ matrix.shard != 'packages' }}" && step.Env["SHARD"] == "${{ matrix.shard }}" &&
+				strings.Contains(step.Run, `test-coverage-shards.py postgres-ui --shard "$SHARD"`)
+		}
+	}
+	gate := w.Jobs["postgres-integration"]
+	if !packages || !ui || !slices.Equal(gate.Needs, []string{"classify", "postgres-tests"}) || len(gate.Steps) != 2 ||
+		gate.Steps[0].Name != "Require every PostgreSQL shard" || gate.Steps[0].Env["RESULT"] != "${{ needs.postgres-tests.result }}" ||
+		gate.Steps[0].Env["DOCS"] != "${{ needs.classify.result == 'success' && needs.classify.outputs.mode == 'docs' }}" ||
+		!strings.Contains(gate.Steps[0].Run, `test "$RESULT" = skipped`) || !strings.Contains(gate.Steps[0].Run, `test "$RESULT" = success`) {
+		t.Fatal("postgres-integration must observe the full matrix and reject failed, missing or unexpectedly skipped workers")
+	}
+}
+
+func TestCIShardNodeRuntimeCoupled(t *testing.T) {
+	w := docsWorkflow(t)
+	exact := regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
+	envRef := regexp.MustCompile(`^\$\{\{ env\.([A-Za-z_][A-Za-z0-9_]*) \}\}$`)
+	producerVersion := ""
+	for _, id := range []string{"unit-plan", "unit-race", "build"} {
+		job := w.Jobs[id]
+		version, condition, consumers := "", "", 0
+		for _, step := range job.Steps {
+			if step.Uses == "actions/setup-node@v4" {
+				version, condition = step.With["node-version"], step.If
+				if match := envRef.FindStringSubmatch(version); match != nil {
+					version = w.Env[match[1]]
+					for _, env := range []map[string]string{job.Env, step.Env} {
+						if value, ok := env[match[1]]; ok {
+							version = value
+						}
+					}
+				}
+				if !exact.MatchString(version) {
+					t.Fatalf("%s requires an exact Node patch version, got %q", id, version)
+				}
+			}
+			mode := map[string]string{"unit-plan": "plan", "unit-race": "run", "build": "merge"}[id]
+			if !strings.Contains(step.Run, "test-coverage-shards.py "+mode) {
+				continue
+			}
+			consumers++
+			if version == "" || condition != "" && condition != step.If {
+				t.Fatalf("%s can fingerprint Node before installing its runtime", id)
+			}
+			if id == "unit-plan" {
+				producerVersion = version
+			} else if version != producerVersion {
+				t.Fatalf("%s uses Node %q, producer uses %q", id, version, producerVersion)
+			}
+		}
+		if consumers != 1 {
+			t.Fatalf("%s: expected one real plan consumer, got %d", id, consumers)
+		}
+	}
+}
+
+func TestCIShardDAGKeepsRequiredBuildFailClosed(t *testing.T) {
+	w := docsWorkflow(t)
+	full := "needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs'"
+	plan := w.Jobs["unit-plan"]
+	race := w.Jobs["unit-race"]
+	build := w.Jobs["build"]
+	if plan.If != "${{ always() && !cancelled() && ("+full+") }}" ||
+		!slices.Equal(plan.Needs, []string{"classify"}) ||
+		plan.Outputs["plan-sha256"] != "${{ steps.plan.outputs.sha256 }}" {
+		t.Fatal("planning must run on classifier failure and export its independent plan SHA")
+	}
+	if race.If != "${{ always() && !cancelled() && needs.unit-plan.result == 'success' && ("+full+") }}" ||
+		!slices.Equal(race.Needs, []string{"classify", "unit-plan"}) ||
+		race.Strategy.FailFast == nil || *race.Strategy.FailFast ||
+		!slices.Equal(race.Strategy.Matrix.Shard, []string{"other", "ui-1", "ui-2", "ui-3", "ui-4", "launcher-1", "launcher-2"}) {
+		t.Fatal("all seven original shards must run without fail-fast or docs/failure bypass")
+	}
+	if build.If != "${{ always() }}" || !slices.Equal(build.Needs, []string{"classify", "unit-plan", "unit-race"}) {
+		t.Fatal("required build must observe failed, missing, skipped and cancelled shard jobs")
+	}
+	gateFound, mergeFound, runFound := false, false, false
+	for _, step := range build.Steps {
+		if step.Name == "Require every race shard" {
+			gateFound = step.If == "" &&
+				step.Env["DOCS"] == "${{ needs.classify.result == 'success' && needs.classify.outputs.mode == 'docs' }}" &&
+				step.Env["PLAN_RESULT"] == "${{ needs.unit-plan.result }}" && step.Env["RACE_RESULT"] == "${{ needs.unit-race.result }}" &&
+				strings.Contains(step.Run, `test "$PLAN_RESULT" = success && test "$RACE_RESULT" = success`) &&
+				strings.Contains(step.Run, `test "$PLAN_RESULT" = skipped && test "$RACE_RESULT" = skipped`)
+		}
+		if step.Name == "Validate all journals and merge atomic coverage" {
+			mergeFound = step.If == "${{ "+full+" }}" && step.Env["PLAN_SHA"] == "${{ needs.unit-plan.outputs.plan-sha256 }}" &&
+				strings.Contains(step.Run, `--plan-sha256 "$PLAN_SHA"`) && strings.Contains(step.Run, "test-coverage-shards.py merge")
+		}
+	}
+	for _, step := range race.Steps {
+		if step.Name == "Run exact race shard" {
+			runFound = step.Env["PLAN_SHA"] == "${{ needs.unit-plan.outputs.plan-sha256 }}" &&
+				strings.Contains(step.Run, `--plan-sha256 "$PLAN_SHA"`) && strings.Contains(step.Run, "test-coverage-shards.py run")
+		}
+	}
+	if !gateFound || !mergeFound || !runFound {
+		t.Fatal("required build lost its explicit result gate, independent plan hash or full journal/profile validation")
 	}
 }
 
@@ -153,7 +287,7 @@ func TestCICommitClosingGate(t *testing.T) {
 		}
 		if step.Name == "Check commit closing references" {
 			found = step.If == "${{ github.event_name == 'pull_request' }}" &&
-				step.Run == `go run ./tools/prclosecheck -event "$GITHUB_EVENT_PATH"` && completeHistory
+				step.Run == `go run ./tools/prclosecheck -event "$GITHUB_EVENT_PATH" -checkout-merge "$GITHUB_SHA"` && completeHistory
 		}
 	}
 	if !found {

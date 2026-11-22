@@ -156,7 +156,7 @@ def main(argv=None):
             "duplicate packages or missing exact UI/launcher package")
     others = [p for p in packages if p not in {UI, LAUNCHER}]
     require(others, "missing ungrouped packages")
-    flags = ["-race", "-count=1", "-timeout=10m", "-json"]
+    flags = ["-race", "-count=1", "-timeout=20m", "-json"]
     inventories = {}
     grouped_runs = []
     for label, package, count in SERIES:

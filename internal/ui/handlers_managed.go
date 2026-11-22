@@ -55,6 +55,12 @@ func (s *Server) renderEntityForm(w http.ResponseWriter, r *http.Request, kind s
 			data["TabTitle"] = title
 			data["RecordTitle"] = title
 		}
+	} else if entity != nil {
+		// Новая карточка — как в 1С: «Звонок (создание)». Без этого вкладка
+		// оставалась с заголовком ссылки, открывшей её, — у кнопки «Создать»
+		// это подсказка горячей клавиши «Insert».
+		lang := s.resolveLang(r)
+		data["TabTitle"] = fmt.Sprintf(s.tr(lang, "%s (создание)"), entity.DisplayName(lang))
 	}
 	// Иерархия: при создании через управляемую форму признак группы и родитель
 	// приходят query-параметрами кнопок «📁 Группа» / «＋ в группе». Автоформа
@@ -145,6 +151,7 @@ func (s *Server) prepareManagedFormData(ctx context.Context, data map[string]any
 	opKind := opFormEvent
 	if processor, _ := data["IsProcessor"].(bool); processor {
 		opKind = opProcessorRun
+		s.mergeProcessorReferencePageOptions(ctx, form, data)
 	}
 	data["FormCloseTimeoutMS"] = formCloseClientTimeoutMS(s.operationTimeout(opKind))
 	data["FormCloseEpoch"] = formCloseProcessEpoch
