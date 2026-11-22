@@ -85,7 +85,11 @@ func newFormCSVDownloadBuiltin(sink **formCSVDownload) interpreter.BuiltinFunc {
 			if rowBytes > maxFormCSVBytes || buf.Len()+rowBytes > maxFormCSVBytes {
 				return nil, fmt.Errorf("СкачатьCSV: файл больше 8 МиБ. Сократите период выгрузки")
 			}
-			if err := writer.Write(cells); err != nil {
+			if width == 1 && cells[0] == "" {
+				// A bare line break is ignored by CSV readers. Quote the sole
+				// empty field so the row survives import.
+				buf.WriteString("\"\"\r\n")
+			} else if err := writer.Write(cells); err != nil {
 				return nil, err
 			}
 			writer.Flush()

@@ -47,3 +47,34 @@ func TestProcessorFormCSVDownload(t *testing.T) {
 		t.Fatalf("read CSV: %+v, %v", rows, err)
 	}
 }
+func TestProcessorFormCSVDownloadEmptyCell(t *testing.T) {
+	form := processorExecutionForm(&metadata.FormElement{
+		Kind: metadata.FormElementButton, Name: "Выгрузить",
+		Handlers: map[metadata.FormEventType]string{metadata.FormEventOnClick: "ВыгрузитьНажатие"},
+	})
+	form.ProgramAST = mustParse(t, `
+Процедура ВыгрузитьНажатие()
+    Строки = Новый Массив;
+    Строки.Добавить(СтрРазделить("Комментарий", ","));
+    Пустая = Новый Массив;
+    Пустая.Добавить(Неопределено);
+    Строки.Добавить(Пустая);
+    Строки.Добавить(СтрРазделить("Заполнено", ","));
+    СкачатьCSV("Тест.csv", Строки);
+КонецПроцедуры
+`)
+	proc := &processor.Processor{Name: "Выгрузка", Forms: []*metadata.FormModule{form}}
+	srv, _ := newProcessorFormEventExecutionServer(t, proc, nil)
+	rec := postProcessorFormEventExecution(t, srv, proc.Name,
+		"application/x-www-form-urlencoded; charset=utf-8", strings.NewReader(processorClickBody("Выгрузить").Encode()))
+	resp := decodeFormEventResponse(t, rec.Body.Bytes())
+	if !resp.OK || resp.CSV == nil {
+		t.Fatalf("CSV result: %+v", resp)
+	}
+	reader := csv.NewReader(strings.NewReader(strings.TrimPrefix(string(resp.CSV.Content), "\uFEFF")))
+	reader.Comma = ';'
+	rows, err := reader.ReadAll()
+	if err != nil || len(rows) != 3 || rows[0][0] != "Комментарий" || rows[1][0] != "" || rows[2][0] != "Заполнено" {
+		t.Fatalf("read CSV: %+v, %v", rows, err)
+	}
+}
