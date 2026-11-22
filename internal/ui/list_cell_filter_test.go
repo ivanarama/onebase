@@ -78,7 +78,9 @@ func TestListCellExactFilterHTTPMatrix(t *testing.T) {
 				t.Fatal(err)
 			}
 			rows, err := book.GetRows(book.GetSheetName(0))
-			book.Close()
+			if closeErr := book.Close(); closeErr != nil {
+				t.Fatal(closeErr)
+			}
 			if err != nil {
 				t.Fatal(err)
 			}
