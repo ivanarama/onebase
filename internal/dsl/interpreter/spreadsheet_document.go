@@ -30,6 +30,10 @@ func NewSpreadsheetDocumentCell(text string) *SpreadsheetDocumentCell {
 type SpreadsheetDocumentArea struct {
 	document *SpreadsheetDocument
 	Area     *sheet.Area
+	// colWidths — ширины колонок макета (1-based px), из которого взята
+	// область: Вывести переносит их в документ, как 1С переносит ширины
+	// колонок макета.
+	colWidths map[int]float64
 }
 
 func (a *SpreadsheetDocumentArea) CallMethod(name string, args []any) any {
@@ -88,6 +92,10 @@ func (a *SpreadsheetDocumentArea) setParameter(name string, value any) {
 // Get allows accessing cells via dot notation (Area.R1C1) or properties (Area.Параметры).
 func (a *SpreadsheetDocumentArea) Get(field string) any {
 	switch strings.ToLower(field) {
+	case "подчеркивание", "подчёркивание", "underline":
+		return a.Area.GetOrCreateCell(0, 0).Underline
+	case "расшифровка", "drilldown":
+		return a.Area.GetOrCreateCell(0, 0).DrilldownSource
 	case "текст", "text":
 		if cell, ok := a.Area.Cells["0,0"]; ok {
 			return cell.Text
@@ -109,6 +117,25 @@ func (a *SpreadsheetDocumentArea) setProperty(field string, v any) {
 	rows := a.Area.Rows()
 	cols := a.Area.Cols()
 	switch strings.ToLower(field) {
+	case "подчеркивание", "подчёркивание", "underline":
+		for r := 0; r < rows; r++ {
+			for c := 0; c < cols; c++ {
+				a.Area.GetOrCreateCell(r, c).Underline = truthy(v)
+			}
+		}
+	case "расшифровка", "drilldown":
+		for r := 0; r < rows; r++ {
+			for c := 0; c < cols; c++ {
+				w := &SpreadsheetDocumentCellWrapper{cell: a.Area.GetOrCreateCell(r, c)}
+				w.Set("расшифровка", v)
+			}
+		}
+	case "формат", "format":
+		for r := 0; r < rows; r++ {
+			for c := 0; c < cols; c++ {
+				a.Area.GetOrCreateCell(r, c).Format = strArg([]any{v}, 0)
+			}
+		}
 	case "текст", "text":
 		text := strArg([]any{v}, 0)
 		for r := 0; r < rows; r++ {
@@ -262,6 +289,8 @@ func (d *SpreadsheetDocument) Get(field string) any {
 	switch strings.ToLower(field) {
 	case "ориентациястраницы", "pageorientation", "orientation":
 		return d.Doc.Page.Orientation
+	case "автомасштаб", "autoscale":
+		return d.Doc.AutoScale
 	case "размерстраницы", "pagesize", "format":
 		return d.Doc.Page.Format
 	}
@@ -277,10 +306,20 @@ func (d *SpreadsheetDocument) Set(field string, v any) {
 	switch strings.ToLower(field) {
 	case "ориентациястраницы", "pageorientation", "orientation":
 		d.Doc.Page.Orientation = normalizeOrientation(strArg([]any{v}, 0))
+	case "автомасштаб", "autoscale":
+		d.Doc.AutoScale = truthy(v)
 	case "размерстраницы", "pagesize", "format":
 		d.Doc.Page.Format = strings.TrimSpace(strArg([]any{v}, 0))
+	case "имяфайла", "filename":
+		d.Doc.FileName = strArg([]any{v}, 0)
 	case "поляпечати", "printmargins", "margins":
 		d.setMargins(v)
+	case "фиксациясверху", "fixedtop":
+		d.Doc.FreezeRows = int(toFloatOr0(v))
+	case "фиксацияслева", "fixedleft":
+		d.Doc.FreezeCols = int(toFloatOr0(v))
+	case "отображатьсетку", "showgrid":
+		d.Doc.HideGrid = !truthy(v)
 	}
 }
 
@@ -321,6 +360,16 @@ func (d *SpreadsheetDocument) CallMethod(name string, args []any) any {
 	switch name {
 	case "вывести", "put":
 		return d.put(args)
+	case "начатьавтогруппировкустрок", "startautogroupingrows":
+		return nil // Output levels define the hierarchy.
+	case "закончитьавтогруппировкустрок", "endautogroupingrows":
+		for i := range d.Doc.Groups {
+			if !d.Doc.Groups[i].Closed {
+				d.Doc.Groups[i].End = d.Doc.CurrentRow - 1
+				d.Doc.Groups[i].Closed = true
+			}
+		}
+		return nil // A following ungrouped total stays outside the last group.
 	case "присоединить", "append":
 		return d.append(args)
 	case "область", "area":
@@ -405,7 +454,24 @@ func (d *SpreadsheetDocument) put(args []any) any {
 	if !ok {
 		return nil
 	}
+	// Ширины колонок макета — только незаданные: ШиринаКолонки модуля главнее.
+	for col, px := range area.colWidths {
+		if d.Doc.ColumnWidth(col) <= 0 {
+			d.Doc.SetColumnWidth(col, px)
+		}
+	}
+	start := d.Doc.CurrentRow
 	d.Doc.Put(area.Area)
+	if len(args) > 1 {
+		level := int(toFloatOr0(args[1]))
+		if level > 0 && level <= 7 {
+			expanded := true
+			if len(args) > 3 {
+				expanded = truthy(args[3])
+			}
+			d.Doc.Groups = append(d.Doc.Groups, sheet.RowGroup{Start: start, HeaderEnd: d.Doc.CurrentRow - 1, Level: level, Title: strArg(args, 2), Expanded: expanded})
+		}
+	}
 	return nil
 }
 
@@ -419,6 +485,13 @@ func (d *SpreadsheetDocument) append(args []any) any {
 		return nil
 	}
 	d.Doc.Append(area.Area)
+	// The joined area's local widths move with its horizontal cell offset.
+	// Explicit document widths keep their existing precedence.
+	for col, px := range area.colWidths {
+		if col >= 1 && col <= area.Area.Cols() && d.Doc.ColumnWidth(d.Doc.CurrentCol+col) <= 0 {
+			d.Doc.SetColumnWidth(d.Doc.CurrentCol+col, px)
+		}
+	}
 	return nil
 }
 
@@ -467,7 +540,8 @@ func (d *SpreadsheetDocument) HTMLString() string {
 // Формат содержимого зависит от типа:
 //   - "pdf"        → base64-строка PDF-байтов (как ВыгрузитьВExcel);
 //   - "html"/""    → сырой HTML-текст;
-//   - "txt"        → сырой табличный текст (колонки \t, строки \n).
+//   - "txt"        → сырой табличный текст (колонки \t, строки \n);
+//   - "xlsx"/"xls"/"xls97" → base64-строка книги Excel с оформлением макета.
 func (d *SpreadsheetDocument) write(fileName string, args []any) any {
 	d.Doc.FileName = fileName
 	fileType := "html"
@@ -482,6 +556,8 @@ func (d *SpreadsheetDocument) write(fileName string, args []any) any {
 		return d.writePDF(fileName)
 	case "txt":
 		return d.writeTXT(fileName)
+	case "xlsx", "xls", "xls97":
+		return d.writeXLSX(fileName)
 	}
 	return nil
 }
@@ -502,6 +578,20 @@ func (d *SpreadsheetDocument) writePDF(fileName string) any {
 	b, err := d.Doc.PDF(sheet.PDFOptions{Title: fileName})
 	if err != nil {
 		msg := fmt.Sprintf("Ошибка формирования PDF %q: %v", fileName, err)
+		fmt.Printf("// %s\n", msg)
+		return msg
+	}
+	return base64.StdEncoding.EncodeToString(b)
+}
+
+// writeXLSX выгружает документ в xlsx с оформлением макета (шрифт, рамки,
+// заливка, выравнивание, объединения, ширины) и возвращает base64-строку, как
+// writePDF: её берёт вложение письма с Base64 = Истина. «xls»/«xls97» —
+// синонимы (ТипФайлаТабличногоДокумента.XLS97 в 1С): пишется современный xlsx.
+func (d *SpreadsheetDocument) writeXLSX(fileName string) any {
+	b, err := d.Doc.XLSX()
+	if err != nil {
+		msg := fmt.Sprintf("Ошибка формирования XLSX %q: %v", fileName, err)
 		fmt.Printf("// %s\n", msg)
 		return msg
 	}
@@ -587,6 +677,10 @@ type SpreadsheetDocumentCellWrapper struct {
 
 func (w *SpreadsheetDocumentCellWrapper) Get(field string) any {
 	switch strings.ToLower(field) {
+	case "расшифровка", "drilldown":
+		return w.cell.DrilldownSource
+	case "подчеркивание", "подчёркивание", "underline":
+		return w.cell.Underline
 	case "текст", "text":
 		return w.cell.Text
 	case "значение", "value":
@@ -617,10 +711,20 @@ func (w *SpreadsheetDocumentCellWrapper) Get(field string) any {
 
 func (w *SpreadsheetDocumentCellWrapper) Set(field string, v any) {
 	switch strings.ToLower(field) {
+	case "формат", "format":
+		w.cell.Format = strArg([]any{v}, 0)
+	case "расшифровка", "drilldown":
+		w.cell.Drilldown = nil
+		w.cell.DrilldownPayload = nil
+		w.cell.DrilldownSource = v
+		if r, ok := v.(*Ref); ok && r != nil && r.Type != "" {
+			w.cell.Drilldown = &sheet.Reference{Entity: r.Type, ID: r.UUID}
+		}
 	case "текст", "text":
 		w.cell.Text = strArg([]any{v}, 0)
 	case "значение", "value":
 		w.cell.Value = v
+		w.cell.Text = strArg([]any{v}, 0)
 	case "ширина", "width":
 		w.cell.Width = toFloatOr0(v)
 	case "высота", "height":
@@ -633,6 +737,8 @@ func (w *SpreadsheetDocumentCellWrapper) Set(field string, v any) {
 		w.cell.Bold = truthy(v)
 	case "курсив", "italic":
 		w.cell.Italic = truthy(v)
+	case "подчеркивание", "подчёркивание", "underline":
+		w.cell.Underline = truthy(v)
 	case "размершрифта", "fontsize":
 		w.cell.FontSize = int(toFloatOr0(v))
 	case "цветфона", "backcolor":
