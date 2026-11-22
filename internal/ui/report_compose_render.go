@@ -16,8 +16,12 @@ import (
 // renderComposedTable строит единую <table> с раскрываемыми группами,
 // подитогами, общим итогом и условным оформлением деталей. Порядок строк задаёт
 // walkComposed (общий с Excel-выгрузкой); htmlComposeSink рисует каждую строку.
-func renderComposedTable(res *compose.Result, spec *report.Composition) template.HTML {
+func renderComposedTable(res *compose.Result, spec *report.Composition, drilldowns ...*reportDrilldownRenderer) template.HTML {
 	var b strings.Builder
+	var links *reportDrilldownRenderer
+	if len(drilldowns) > 0 {
+		links = drilldowns[0]
+	}
 	depth, collapsed := collapseLevel(spec)
 	b.WriteString(`<table class="` + appearanceClass(spec) + `"`)
 	if collapsed {
@@ -28,8 +32,11 @@ func renderComposedTable(res *compose.Result, spec *report.Composition) template
 	for _, m := range spec.Measures {
 		b.WriteString(`<th class="num" style="` + html.EscapeString(measureAlign(m)) + `">` + html.EscapeString(measureTitle(m)) + `</th>`)
 	}
+	if links.HasRows() {
+		b.WriteString(`<th>` + html.EscapeString(links.RowTitle()) + `</th>`)
+	}
 	b.WriteString(`</tr></thead><tbody>`)
-	sink := &htmlComposeSink{b: &b, spec: spec, collapseTo: depth}
+	sink := &htmlComposeSink{b: &b, spec: spec, collapseTo: depth, drilldowns: links}
 	if !collapsed {
 		sink.collapseTo = -1
 	}
@@ -62,6 +69,7 @@ type htmlComposeSink struct {
 	b          *strings.Builder
 	spec       *report.Composition
 	collapseTo int
+	drilldowns *reportDrilldownRenderer
 }
 
 // hiddenStyle возвращает display:none для строк, скрытых начальным
@@ -85,10 +93,14 @@ func (h *htmlComposeSink) groupMarker(level int) string {
 // measureCells выводит ячейки показателей строки: выравнивание + условное
 // оформление по styles[поле]. Общий код для строк группы, подытога и детали
 // (раньше один и тот же цикл был скопирован трижды).
-func (h *htmlComposeSink) measureCells(vals map[string]any, styles map[string]report.CellStyle) {
+func (h *htmlComposeSink) measureCells(vals map[string]any, styles map[string]report.CellStyle, detail ...bool) {
 	for _, m := range h.spec.Measures {
 		cell := joinStyles(measureAlign(m), cssOf(styles[m.Field]))
-		h.b.WriteString(`<td class="num" style="` + html.EscapeString(cell) + `">` + html.EscapeString(fmtMeasure(vals[m.Field], m)) + `</td>`)
+		text := html.EscapeString(fmtMeasure(vals[m.Field], m))
+		if len(detail) > 0 && detail[0] {
+			text = string(h.drilldowns.Cell(m.Field, vals, fmtMeasure(vals[m.Field], m)))
+		}
+		h.b.WriteString(`<td class="num" style="` + html.EscapeString(cell) + `">` + text + `</td>`)
 	}
 }
 
@@ -98,6 +110,9 @@ func (h *htmlComposeSink) group(g *compose.Group, level int, path string) {
 	fmt.Fprintf(h.b, `<tr class="grp" data-group="%s" data-level="%d" style="%s"><td style="%s">%s %s</td>`,
 		html.EscapeString(path), level, html.EscapeString(rowStyle), pad, h.groupMarker(level), html.EscapeString(fmtVal(g.Key)))
 	h.measureCells(g.Subtotals, g.Styles)
+	if h.drilldowns.HasRows() {
+		h.b.WriteString(`<td></td>`)
+	}
 	h.b.WriteString(`</tr>`)
 }
 
@@ -118,7 +133,10 @@ func (h *htmlComposeSink) detail(d compose.DetailRow, level int, path string) {
 	if !linked {
 		fmt.Fprintf(h.b, `<td style="padding-left:%dpx"></td>`, 8+level*18)
 	}
-	h.measureCells(d.Values, d.Styles)
+	h.measureCells(d.Values, d.Styles, true)
+	if h.drilldowns.HasRows() {
+		h.b.WriteString(`<td>` + string(h.drilldowns.Row(d.Values)) + `</td>`)
+	}
 	h.b.WriteString(`</tr>`)
 }
 
@@ -127,6 +145,9 @@ func (h *htmlComposeSink) subtotal(g *compose.Group, level int, path string) {
 	fmt.Fprintf(h.b, `<tr class="subtotal" data-parent="%s" style="%s"><td style="padding-left:%dpx">··· Итого: %s ···</td>`,
 		html.EscapeString(path), html.EscapeString(rowStyle), 8+level*18, html.EscapeString(fmtVal(g.Key)))
 	h.measureCells(g.Subtotals, g.Styles)
+	if h.drilldowns.HasRows() {
+		h.b.WriteString(`<td></td>`)
+	}
 	h.b.WriteString(`</tr>`)
 }
 
@@ -135,6 +156,9 @@ func (h *htmlComposeSink) grand(grand map[string]any) {
 	// те же ячейки (только выравнивание), что и прежний отдельный код.
 	h.b.WriteString(`<tr class="grand"><td>ВСЕГО</td>`)
 	h.measureCells(grand, nil)
+	if h.drilldowns.HasRows() {
+		h.b.WriteString(`<td></td>`)
+	}
 	h.b.WriteString(`</tr>`)
 }
 
