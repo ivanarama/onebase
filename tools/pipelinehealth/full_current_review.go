@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/ivantit66/onebase/internal/reviewrouting"
 )
@@ -60,12 +61,14 @@ func sameFullReviewComments(comments []apiComment, snapshot map[string]any) bool
 		}
 		id, err := strconv.ParseInt(routingText(node["fullDatabaseId"]), 10, 64)
 		comment, found := byID[id]
-		updated := node["createdAt"]
-		if node["lastEditedAt"] != nil {
-			updated = node["lastEditedAt"]
+		// updatedAt can differ from the body's edit time on GitHub. Compare
+		// the same nullable edit field from both complete observations.
+		var lastEditedAt any
+		if comment.lastEditedAt != nil {
+			lastEditedAt = *comment.lastEditedAt
 		}
 		if err != nil || !found || comment.Body != node["body"] || comment.CreatedAt != node["createdAt"] ||
-			comment.UpdatedAt != updated || comment.User.Login != routingText(routingObject(node["author"])["login"]) {
+			!reviewrouting.Equal(lastEditedAt, node["lastEditedAt"]) || comment.User.Login != routingText(routingObject(node["author"])["login"]) {
 			return false
 		}
 		delete(byID, id)
@@ -90,7 +93,7 @@ func verifiedFullCurrentReview(snapshot map[string]any, trusted string) bool {
 		// Integration markers stay conservative. Typed records share the body
 		// boundary classifier used by ReadRecords and the ordinary fallback;
 		// their original body and all strict parser checks remain unchanged.
-		if strings.Contains(body, "pp:base-sync-") || reviewrouting.HasRecordPrefix(body) {
+		if hasBaseSyncRecordCandidate(body) || reviewrouting.HasRecordPrefix(body) {
 			return false
 		}
 		if node["id"] == epoch.AnchorID {
@@ -114,6 +117,40 @@ func verifiedFullCurrentReview(snapshot map[string]any, trusted string) bool {
 		if afterAnchor[proof.CompletionID] && proof.Kind == "legacy" && proof.Head == snapshot["headRefOid"] &&
 			proof.Epoch == epoch.Hash && proof.Outcome == "reviewed" {
 			return true
+		}
+	}
+	return false
+}
+
+// hasBaseSyncRecordCandidate recognizes an actual protocol-line candidate,
+// including malformed/unknown versions, without treating explanations or quoted
+// examples as integration history. Fence boundaries follow HasReviewAgain;
+// leading noncanonical whitespace/BOM remains fail-closed, like HasRecordPrefix.
+// This does not parse or authorize a carry: any candidate still closes this lane.
+func hasBaseSyncRecordCandidate(body string) bool {
+	var fence byte
+	var fenceLength int
+	for _, line := range strings.Split(body, "\n") {
+		boundary := strings.TrimLeftFunc(line, func(r rune) bool { return unicode.IsSpace(r) || r == '\ufeff' })
+		if fence == 0 && strings.HasPrefix(boundary, "<!-- pp:base-sync-") {
+			return true
+		}
+		text := strings.TrimLeft(line, " ")
+		if len(line)-len(text) > 3 || len(text) < 3 || (text[0] != '`' && text[0] != '~') {
+			continue
+		}
+		length := 1
+		for length < len(text) && text[length] == text[0] {
+			length++
+		}
+		if fence != 0 {
+			if text[0] == fence && length >= fenceLength && strings.Trim(text[length:], " \t\r") == "" {
+				fence, fenceLength = 0, 0
+			}
+			continue
+		}
+		if length >= 3 && (text[0] != '`' || !strings.Contains(text[length:], "`")) {
+			fence, fenceLength = text[0], length
 		}
 	}
 	return false
