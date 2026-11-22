@@ -2270,6 +2270,7 @@ const tplList = `
     {{/* На свежем списке строка не выбрана — кнопка приходит с сервера уже
          приглушённой, дальше её состояние ведёт ui.js по выделению. */}}
     <button type="button" id="list-actions-btn" class="btn btn-secondary" data-ob-list-actions aria-disabled="true" title="{{t $.Lang "Сначала выберите строку списка"}}">⚙ {{t $.Lang "Действия"}} ▾</button>
+    {{range .ProcessorLinks}}<a class="btn btn-secondary" href="{{.URL}}">{{.Title}}</a>{{end}}
     <a class="btn btn-sm" href="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}/excel{{listExcelSuffix .Params .ListFormOff}}" style="background:#16a34a;color:#fff" title="{{t $.Lang "Скачать Excel"}}">{{t $.Lang "Excel ↓"}}</a>
   </div>
 </div>
