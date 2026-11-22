@@ -76,6 +76,9 @@ func ExportList(cols []string, rows [][]any) ([]byte, error) {
 	if err := f.SetSheetName("Sheet1", name); err != nil {
 		return nil, err
 	}
+	if err := setListUsedRange(f, name, cols, rows); err != nil {
+		return nil, err
+	}
 	sh := &sheet{f: f, name: name}
 
 	boldStyle, cellStyle, numStyle := listStyles(f)
@@ -212,6 +215,10 @@ func WriteList(w io.Writer, cols []string, rows [][]any) error {
 	if err := f.SetSheetName("Sheet1", sheetName); err != nil {
 		return err
 	}
+	// StreamWriter serializes worksheet metadata at construction, before rows.
+	if err := setListUsedRange(f, sheetName, cols, rows); err != nil {
+		return err
+	}
 	boldStyle, cellStyle, numStyle := listStyles(f)
 
 	sw, err := f.NewStreamWriter(sheetName)
@@ -283,4 +290,28 @@ func WriteList(w io.Writer, cols []string, rows [][]any) error {
 		return err
 	}
 	return f.Write(w)
+}
+
+// Bounds include headers and every written value/style cell, including nils,
+// ragged rows beyond the header width and empty styled tails. Row height alone
+// does not create a used cell. Never infer the extent from non-empty text only.
+func setListUsedRange(f *excelize.File, name string, cols []string, rows [][]any) error {
+	maxCol, lastRow := len(cols), 1
+	for i, row := range rows {
+		if len(row) > 0 {
+			maxCol = max(maxCol, len(row))
+			lastRow = i + 2
+		}
+	}
+	ref := "A1"
+	if maxCol > 0 {
+		last, err := excelize.CoordinatesToCellName(maxCol, lastRow)
+		if err != nil {
+			return err
+		}
+		if last != "A1" {
+			ref += ":" + last
+		}
+	}
+	return f.SetSheetDimension(name, ref)
 }
