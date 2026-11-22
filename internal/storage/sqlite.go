@@ -90,10 +90,11 @@ func init() {
 		default:
 			return nil, nil
 		}
-		for _, layout := range []string{sqliteTimeLayout, time.RFC3339Nano, time.RFC3339} {
-			if parsed, err := time.Parse(layout, strings.TrimSpace(value)); err == nil {
-				return parsed.In(time.Local).Format("2006-01-02 15:04:05.999999999"), nil
-			}
+		if parsed, err := time.Parse(sqliteTimeLayout, strings.TrimSpace(value)); err == nil {
+			return parsed.In(time.Local).Format("2006-01-02 15:04:05.999999999"), nil
+		}
+		if parsed, ok := ParseRegPeriod(value); ok {
+			return parsed.In(time.Local).Format("2006-01-02 15:04:05.999999999"), nil
 		}
 		return nil, nil
 	})

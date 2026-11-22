@@ -3036,6 +3036,10 @@ func parseListParams(r *http.Request, entity *metadata.Entity, defaultLimit int)
 		}
 		switch f.Type {
 		case metadata.FieldTypeDate:
+			if day := q.Get("f." + f.Name + ".eq"); day != "" {
+				params.Filters[f.Name] = storage.FilterValue{Value: day, Exact: true}
+				continue
+			}
 			from := q.Get("f." + f.Name + ".from")
 			to := q.Get("f." + f.Name + ".to")
 			if from != "" || to != "" {

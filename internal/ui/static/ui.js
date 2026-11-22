@@ -2625,7 +2625,6 @@ function makeTreeRow(row) {
     if (cellFilter && cellFilter.field) {
       td.setAttribute('data-ob-cell', cellFilter.field);
       td.setAttribute('data-ob-cell-value', cellFilter.value);
-      td.setAttribute('data-ob-cell-type', cellFilter.type);
     }
     if (i === treeCell) {
       var indent = document.createElement('span');
@@ -2691,11 +2690,9 @@ var obListActiveCell = null;
 function obCellFilterApply() {
   if (!obListActiveCell || !obListActiveCell.isConnected) return;
   var field=obListActiveCell.getAttribute('data-ob-cell'), value=obListActiveCell.getAttribute('data-ob-cell-value');
-  var type=obListActiveCell.getAttribute('data-ob-cell-type');
   var target=new URL(window.location.href);
   ['','.eq','.from','.to'].forEach(function(suffix) { target.searchParams.delete('f.'+field+suffix); });
-  if (type==='date') { target.searchParams.set('f.'+field+'.from',value);target.searchParams.set('f.'+field+'.to',value); }
-  else { target.searchParams.set('f.'+field+'.eq',value); }
+  target.searchParams.set('f.'+field+'.eq',value);
   ['page','cursor','sort_snapshot'].forEach(function(k) { target.searchParams.delete(k); });
   window.location.href=target.toString();
 }

@@ -56,7 +56,7 @@ type ListParams struct {
 
 // FilterValue holds a filter for one field.
 type FilterValue struct {
-	Value string // used for string and reference equality
+	Value string // used for equality, including the local calendar day for dates
 	From  string // used for date range start (inclusive)
 	To    string // used for date range end (inclusive)
 	Exact bool   // exact scalar equality, including an empty string
@@ -761,6 +761,23 @@ func (db *DB) listWhere(entityName string, entity *metadata.Entity, params ListP
 		column := metadata.ColumnName(field)
 		switch {
 		case field.Type == metadata.FieldTypeDate:
+			if filter.Exact {
+				day, err := time.ParseInLocation(time.DateOnly, filter.Value, time.Local)
+				if err != nil {
+					whereParts = append(whereParts, "1 = 0")
+					continue
+				}
+				if d.Name() == "sqlite" {
+					whereParts = append(whereParts, fmt.Sprintf("substr(ob_local_datetime(%s), 1, 10) = %s", column, d.Placeholder(argIdx)))
+					args = append(args, filter.Value)
+					argIdx++
+				} else {
+					whereParts = append(whereParts, fmt.Sprintf("(%s >= %s AND %s < %s)", column, d.Placeholder(argIdx), column, d.Placeholder(argIdx+1)))
+					args = append(args, day, day.AddDate(0, 0, 1))
+					argIdx += 2
+				}
+				continue
+			}
 			if filter.From != "" {
 				whereParts = append(whereParts, fmt.Sprintf("%s >= %s", column, d.Placeholder(argIdx)))
 				args = append(args, filter.From)

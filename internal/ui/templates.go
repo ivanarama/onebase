@@ -2294,6 +2294,12 @@ const tplList = `
     {{if isActivityField $entity .}}
     {{else}}
     {{if eq (str .Type) "date"}}
+      {{if (filterVal $params .Name).Exact}}
+      <div>
+        <label>{{.DisplayName $.Lang}}</label>
+        <input type="date" name="f.{{.Name}}.eq" value="{{(filterVal $params .Name).Value}}">
+      </div>
+      {{else}}
       <div>
         <label>{{.DisplayName $.Lang}} {{t $.Lang "с"}}</label>
         <input type="date" name="f.{{.Name}}.from" value="{{(filterVal $params .Name).From}}">
@@ -2302,6 +2308,7 @@ const tplList = `
         <label>{{.DisplayName $.Lang}} {{t $.Lang "по"}}</label>
         <input type="date" name="f.{{.Name}}.to" value="{{(filterVal $params .Name).To}}">
       </div>
+      {{end}}
     {{else if isRef (str .Type)}}
       <div>
         <label>{{.DisplayName $.Lang}}</label>

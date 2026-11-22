@@ -6,6 +6,8 @@ import (
 	"html"
 	"html/template"
 	"net/http"
+	"strings"
+	"time"
 
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/storage"
@@ -14,7 +16,6 @@ import (
 type listCellFilterValue struct {
 	Field string `json:"field"`
 	Value string `json:"value"`
-	Type  string `json:"type"`
 }
 
 func listCellFilters(row map[string]any, cols []metadata.Field) []listCellFilterValue {
@@ -22,7 +23,7 @@ func listCellFilters(row map[string]any, cols []metadata.Field) []listCellFilter
 	out := make([]listCellFilterValue, len(cols))
 	for i, f := range cols {
 		if v, ok := values[f.Name]; ok {
-			out[i] = listCellFilterValue{Field: f.Name, Value: v, Type: string(f.Type)}
+			out[i] = listCellFilterValue{Field: f.Name, Value: v}
 		}
 	}
 	return out
@@ -68,7 +69,14 @@ func (s *Server) captureListCellFilters(ctx context.Context, entity *metadata.En
 			if value == nil && (field.Type == metadata.FieldTypeNumber || field.Type == metadata.FieldTypeDate) {
 				continue
 			}
-			values[field.Name] = formatFieldValueForInput(field, value)
+			formatted := formatFieldValueForInput(field, value)
+			if field.Type == metadata.FieldTypeDate {
+				formatted, _, _ = strings.Cut(formatted, "T")
+				if _, err := time.Parse(time.DateOnly, formatted); err != nil {
+					continue
+				}
+			}
+			values[field.Name] = formatted
 		}
 		row["_ob_cell_values"] = values
 	}
@@ -81,5 +89,5 @@ func listCellFilterAttrs(row map[string]any, field metadata.Field) template.HTML
 		return ""
 	}
 	// Attribute names are fixed; each metadata/value string is HTML-escaped.
-	return template.HTMLAttr(fmt.Sprintf(`data-ob-cell="%s" data-ob-cell-value="%s" data-ob-cell-type="%s"`, html.EscapeString(field.Name), html.EscapeString(value), html.EscapeString(string(field.Type)))) //nolint:gosec // G203: fixed attribute names and HTML-escaped values.
+	return template.HTMLAttr(fmt.Sprintf(`data-ob-cell="%s" data-ob-cell-value="%s"`, html.EscapeString(field.Name), html.EscapeString(value))) //nolint:gosec // G203: fixed attribute names and HTML-escaped values.
 }

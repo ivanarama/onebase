@@ -20,6 +20,18 @@ import (
 )
 
 func TestListCellExactFilterHTTPMatrix(t *testing.T) {
+	for _, zone := range []*time.Location{time.FixedZone("east", 3*60*60), time.FixedZone("west", -5*60*60)} {
+		t.Run(zone.String(), func(t *testing.T) {
+			saved := time.Local
+			time.Local = zone
+			t.Cleanup(func() { time.Local = saved })
+			testListCellExactFilterHTTP(t)
+		})
+	}
+}
+
+func testListCellExactFilterHTTP(t *testing.T) {
+	t.Helper()
 	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
 		target := &metadata.Entity{Name: "Targets", Kind: metadata.KindCatalog, Fields: []metadata.Field{{Name: "Наименование", Type: metadata.FieldTypeString}}}
 		ent := &metadata.Entity{Name: "Items", Kind: metadata.KindCatalog, Fields: []metadata.Field{
@@ -36,13 +48,21 @@ func TestListCellExactFilterHTTPMatrix(t *testing.T) {
 			}
 		}
 		for _, row := range []map[string]any{
-			{"Наименование": "Exact%_", "Amount": 5, "Flag": false, "Day": time.Date(2026, 11, 12, 12, 0, 0, 0, time.Local), "Target": id1.String()},
-			{"Наименование": "prefixExact%_suffix", "Amount": 50, "Flag": true, "Day": time.Date(2026, 11, 13, 12, 0, 0, 0, time.Local), "Target": id2.String()},
-			{"Наименование": "Other", "Amount": 5, "Flag": false, "Day": time.Date(2026, 11, 12, 21, 0, 0, 0, time.Local), "Target": id2.String()},
+			{"Наименование": "Exact%_", "Amount": 5, "Flag": false, "Day": time.Date(2026, 11, 12, 0, 0, 0, 0, time.Local), "Target": id1.String()},
+			{"Наименование": "prefixExact%_suffix", "Amount": 50, "Flag": true, "Day": time.Date(2026, 11, 13, 0, 0, 0, 0, time.Local), "Target": id2.String()},
+			{"Наименование": "Other", "Amount": 5, "Flag": false, "Day": time.Date(2026, 11, 12, 23, 59, 59, 0, time.Local), "Target": id2.String()},
 		} {
 			if err := db.Upsert(ctx, ent.Name, uuid.New(), row, ent); err != nil {
 				t.Fatal(err)
 			}
+		}
+		wantDay := 2
+		if db.Dialect().Name() == "sqlite" {
+			legacy := map[string]any{"Наименование": "Legacy", "Amount": 50, "Flag": true, "Day": "2026-11-12 06:00:00", "Target": id2.String()}
+			if err := db.Upsert(ctx, ent.Name, uuid.New(), legacy, ent); err != nil {
+				t.Fatal(err)
+			}
+			wantDay++
 		}
 		for _, tc := range []struct {
 			q    url.Values
@@ -54,7 +74,8 @@ func TestListCellExactFilterHTTPMatrix(t *testing.T) {
 			{url.Values{"f.Amount.eq": {"not-number"}}, 0},
 			{url.Values{"f.Flag.eq": {"false"}}, 2},
 			{url.Values{"f.Target.eq": {id1.String()}}, 1},
-			{url.Values{"f.Day.from": {"2026-11-12"}, "f.Day.to": {"2026-11-12"}}, 2},
+			{url.Values{"f.Day.eq": {"2026-11-12"}}, wantDay},
+			{url.Values{"f.Day.eq": {"not-a-date"}}, 0},
 		} {
 			r := reqWithChi("GET", "/ui/catalog/Items?"+tc.q.Encode(), nil, map[string]string{"entity": "Items"})
 			rec := httptest.NewRecorder()
@@ -67,6 +88,13 @@ func TestListCellExactFilterHTTPMatrix(t *testing.T) {
 			}
 			if tc.want > 0 && !strings.Contains(rec.Body.String(), "data-ob-cell=") {
 				t.Fatal("no filterable cells")
+			}
+			if tc.q.Get("f.Day.eq") == "2026-11-12" {
+				for _, expected := range []string{`data-ob-cell="Day" data-ob-cell-value="2026-11-12"`, `name="f.Day.eq" value="2026-11-12"`} {
+					if !strings.Contains(rec.Body.String(), expected) {
+						t.Fatalf("filter state missing: %s", expected)
+					}
+				}
 			}
 			export := httptest.NewRecorder()
 			s.listExcel(export, reqWithChi("GET", "/ui/catalog/Items/excel?"+tc.q.Encode(), nil, map[string]string{"entity": "Items"}))
