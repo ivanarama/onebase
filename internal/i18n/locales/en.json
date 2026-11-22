@@ -1609,5 +1609,7 @@
   "Изменённая сборка": "Modified distribution",
   "Поставщик сборки": "Distribution supplier",
   "Переводы поля «%s» для языка %s изменены по-разному в двух редакторах. Укажите одинаковое значение и сохраните снова": "The translation of field \"%s\" for language %s was changed differently in the two editors. Enter the same value and save again",
-  "Результаты поиска по всему справочнику": "Search results across the whole catalog"
+  "Результаты поиска по всему справочнику": "Search results across the whole catalog",
+  "Открыть в полном размере": "Open full size",
+  "Нет изображения": "No image"
 }
