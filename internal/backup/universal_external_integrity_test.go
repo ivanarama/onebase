@@ -114,7 +114,7 @@ func TestValidateUniversalExportExternalObjectsHandlesBlobLocations(t *testing.T
 	if err != nil {
 		t.Fatalf("mixed valid blob locations rejected: %v", err)
 	}
-	if len(expected) != 1 || expected[strings.ToLower("_blobs/"+disk.ID.String())].size != int64(len("on disk")) {
+	if len(expected.required) != 1 || expected.required[strings.ToLower("_blobs/"+disk.ID.String())].size != int64(len("on disk")) {
 		t.Fatalf("disk allowlist = %#v, want exactly blob %s", expected, disk.ID)
 	}
 }

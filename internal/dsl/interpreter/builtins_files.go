@@ -1,6 +1,8 @@
 package interpreter
 
 import (
+	"crypto/md5" //nolint:gosec // G501: compatibility with existing 1C photo checksums
+	"encoding/hex"
 	"github.com/ivantit66/onebase/internal/fsmode"
 	oblog "github.com/ivantit66/onebase/internal/logging"
 	"io"
@@ -25,6 +27,8 @@ func init() {
 	builtins["findfiles"] = findFilesFn
 	builtins["прочитатьфайл"] = readFileFn
 	builtins["readfile"] = readFileFn
+	builtins["md5файла"] = fileMD5Fn
+	builtins["filemd5"] = fileMD5Fn
 }
 
 // ПрочитатьФайл(Путь) — содержимое текстового файла одной строкой.
@@ -51,6 +55,9 @@ func readFileFn(args []any, _ string, _ int) (any, error) {
 
 // КопироватьФайл(Откуда, Куда) — копирование содержимого файла.
 func copyFileFn(args []any, _ string, _ int) (any, error) {
+	if root := strArg(args, 2); root != "" {
+		return nil, copyFromDirectory(root, strArg(args, 0), strArg(args, 1))
+	}
 	src := safePathOrRaise("КопироватьФайл", strArg(args, 0))
 	dst := safePathOrRaise("КопироватьФайл", strArg(args, 1))
 	in, err := os.Open(src) //nolint:gosec // G703: trusted DSL file capability; sandbox profiles replace this builtin before evaluation
@@ -87,6 +94,13 @@ func moveFileFn(args []any, _ string, _ int) (any, error) {
 // УдалитьФайлы(Путь) — удаление файла или пустого каталога. Намеренно не
 // рекурсивно (os.Remove), чтобы случайно не снести дерево каталогов.
 func deleteFileFn(args []any, _ string, _ int) (any, error) {
+	if root := strArg(args, 1); root != "" {
+		deleted, err := deleteFromDirectory(root, strArg(args, 0), strArg(args, 2))
+		if err != nil {
+			RaiseUserError("УдалитьФайлы: " + err.Error())
+		}
+		return deleted, nil
+	}
 	if err := os.Remove(safePathOrRaise("УдалитьФайлы", strArg(args, 0))); err != nil { //nolint:gosec // G703: trusted DSL file capability; sandbox profiles replace this builtin before evaluation
 		RaiseUserError("УдалитьФайлы: " + err.Error())
 	}
@@ -103,6 +117,13 @@ func makeDirFn(args []any, _ string, _ int) (any, error) {
 
 // НайтиФайлы(Путь, Маска) → Массив путей подходящих файлов.
 func findFilesFn(args []any, _ string, _ int) (any, error) {
+	if root := strArg(args, 2); root != "" {
+		matches, err := findInDirectory(root, strArg(args, 0), strArg(args, 1))
+		if err != nil {
+			RaiseUserError("НайтиФайлы: " + err.Error())
+		}
+		return matches, nil
+	}
 	pattern := filepath.Join(safePathOrRaise("НайтиФайлы", strArg(args, 0)), strArg(args, 1))
 	matches, err := filepath.Glob(pattern)
 	if err != nil {
@@ -113,4 +134,53 @@ func findFilesFn(args []any, _ string, _ int) (any, error) {
 		arr.items = append(arr.items, m)
 	}
 	return arr, nil
+}
+
+// fileMD5Fn matches the MD5 checksums already stored with imported master photos.
+func fileMD5Fn(args []any, _ string, _ int) (any, error) {
+	const op = "MD5Файла"
+	raw := strArg(args, 0)
+	if raw == "" {
+		RaiseUserError(op + ": не указан путь к файлу")
+	}
+
+	path := safePathOrRaise(op, raw)
+	var file *os.File
+	var err error
+	if base := FileSandboxRoot(); base != "" {
+		root, rootErr := os.OpenRoot(base)
+		if rootErr != nil {
+			RaiseUserError(op + ": не удалось открыть рабочий каталог")
+		}
+		defer oblog.CloseQuiet("dsl", "рабочий каталог", root)
+		rel, relErr := filepath.Rel(base, path)
+		if relErr != nil {
+			RaiseUserError(op + ": неверный путь к файлу")
+		}
+		file, err = root.OpenFile(rel, fileMD5OpenFlags, 0)
+	} else {
+		file, err = os.OpenFile(path, fileMD5OpenFlags, 0) //nolint:gosec // G703: same trusted file capability as ПрочитатьФайл
+	}
+	if err != nil {
+		RaiseUserError(op + ": " + err.Error())
+	}
+	defer oblog.CloseQuiet("dsl", "файл для контрольной суммы", file)
+	info, err := file.Stat()
+	if err != nil || !info.Mode().IsRegular() {
+		RaiseUserError(op + ": путь не является обычным файлом")
+	}
+
+	digest, err := fileMD5(file)
+	if err != nil {
+		RaiseUserError(op + ": " + err.Error())
+	}
+	return digest, nil
+}
+
+func fileMD5(file io.Reader) (string, error) {
+	digest := md5.New() //nolint:gosec // G401: existing 1C checksum for deduplication
+	if _, err := io.Copy(digest, file); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(digest.Sum(nil)), nil
 }

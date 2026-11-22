@@ -125,7 +125,7 @@ func (db *DB) EnsureAttachmentTable(ctx context.Context) error {
 	if err := db.AddColumnIfMissing(ctx, "_attachments", "loc", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return fmt.Errorf("attachments: loc: %w", err)
 	}
-	return nil
+	return db.ensureAttachmentDeletionQueue(ctx)
 }
 
 // ListAttachments returns all attachments for a given owner.
