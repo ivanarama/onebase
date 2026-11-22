@@ -137,6 +137,15 @@ func (h *handler) configuratorSaveReport(w http.ResponseWriter, r *http.Request)
 		if err := setYAMLMapField(doc, "chart_proc", cp); err != nil {
 			return nil, err
 		}
+		if _, present := r.Form["result_proc"]; present {
+			var rp any
+			if text := strings.TrimSpace(r.FormValue("result_proc")); text != "" {
+				rp = text
+			}
+			if err := setYAMLMapField(doc, "result_proc", rp); err != nil {
+				return nil, err
+			}
+		}
 		var pv any
 		if len(params) > 0 {
 			pv = params

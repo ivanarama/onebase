@@ -98,7 +98,7 @@ func formAttrFileLabel(owner string, form *metadata.FormModule) string {
 // использует EqualFold, но formAttrIsScalar различает его регистрозависимо.
 func formAttrTypeKnown(typeRef string) bool {
 	t := strings.TrimSpace(typeRef)
-	return t == "ValueTable" || formValueTypeKnown(t)
+	return t == "ValueTable" || strings.EqualFold(t, "SpreadsheetDocument") || strings.EqualFold(t, "ТабличныйДокумент") || formValueTypeKnown(t)
 }
 
 // formValueTypeKnown повторяет фактическое распознавание типов формы.
