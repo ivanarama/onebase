@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/ivantit66/onebase/internal/auth"
 	"github.com/ivantit66/onebase/internal/dsl/ast"
@@ -788,7 +789,7 @@ func CheckReportComposition(proj *project.Project) []Issue {
 	}
 	// checkComp валидирует одну компоновку. prefix непустой для вариантов
 	// («вариант "Имя": ») — чтобы в сообщении было видно, где именно ошибка.
-	checkComp := func(repName, prefix string, c *report.Composition, outputColumns map[string]bool) {
+	checkComp := func(repName, prefix string, c *report.Composition, outputColumns func() map[string]bool) {
 		if c == nil {
 			return
 		}
@@ -856,7 +857,7 @@ func CheckReportComposition(proj *project.Project) []Issue {
 		}
 	}
 	for _, rep := range proj.Reports {
-		outputs := reportDetailSortColumns(proj, rep)
+		outputs := sync.OnceValue(func() map[string]bool { return reportDetailSortColumns(proj, rep) })
 		checkComp(rep.Name, "", rep.Composition, outputs)
 		for _, v := range rep.Variants {
 			checkComp(rep.Name, "вариант \""+v.Name+"\": ", v.Composition, outputs)

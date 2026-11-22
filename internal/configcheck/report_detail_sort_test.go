@@ -36,9 +36,9 @@ composition:
     - field: D
       dir: desc
 variants:
-  - name: Flat
+  - name: ByGroup
     composition:
-      groupings: []
+      groupings: [g]
       measures:
         - field: n
           agg: sum
@@ -59,18 +59,26 @@ func TestDetailSortValidationDoesNotAllowUnknownColumns(t *testing.T) {
 		name, query, field string
 		detail             bool
 		columns            []string
+		withoutGroup       bool
 		wantIssue          bool
 	}{
 		{name: "alias", query: "ВЫБРАТЬ Label КАК label, Amount КАК amount ИЗ Справочник.Line", field: "LABEL", detail: true},
 		{name: "direct", query: "ВЫБРАТЬ Label, Amount ИЗ Справочник.Line", field: "label", detail: true},
+		{name: "reserved alias actual SQL key", query: "SELECT Label AS Reference, Amount FROM Catalog.Line", field: "id", detail: true},
+		{name: "reserved alias is not an output key", query: "SELECT Label AS Reference, Amount FROM Catalog.Line", field: "reference", detail: true, wantIssue: true},
+		{name: "duplicate physical ID", query: "ВЫБРАТЬ Ссылка, Label КАК Ref, Amount ИЗ Справочник.Line", field: "id", detail: true, wantIssue: true},
 		{name: "unknown", query: "ВЫБРАТЬ Label КАК label ИЗ Справочник.Line", field: "absent", detail: true, wantIssue: true},
 		{name: "no details", query: "ВЫБРАТЬ Label КАК label ИЗ Справочник.Line", field: "label", detail: false, wantIssue: true},
+		{name: "no groups to show details", query: "ВЫБРАТЬ Label КАК label, Amount ИЗ Справочник.Line", field: "label", detail: true, withoutGroup: true, wantIssue: true},
 		{name: "pivot", query: "ВЫБРАТЬ Label КАК label ИЗ Справочник.Line", field: "label", detail: true, columns: []string{"Month"}, wantIssue: true},
 		{name: "duplicate", query: "ВЫБРАТЬ Label КАК label, Amount КАК label ИЗ Справочник.Line", field: "label", detail: true, wantIssue: true},
 		{name: "wildcard", query: "ВЫБРАТЬ * ИЗ Справочник.Line", field: "label", detail: true, wantIssue: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rep := &report.Report{Name: "Details", Query: tc.query, Composition: &report.Composition{Detail: tc.detail, Columns: tc.columns, Sort: []report.SortKey{{Field: tc.field, Dir: "asc"}}}}
+			if !tc.withoutGroup {
+				rep.Composition.Groupings = []string{"group"}
+			}
 			issues := CheckReportComposition(&project.Project{Entities: []*metadata.Entity{entity}, Reports: []*report.Report{rep}})
 			if got := issuesContain(issues, "поле сортировки"); got != tc.wantIssue {
 				t.Fatalf("sort issue=%v want=%v: %+v", got, tc.wantIssue, issues)

@@ -28,19 +28,14 @@ func reportDetailSortColumns(proj *project.Project, rep *report.Report) map[stri
 			return nil
 		}
 		key := strings.ToLower(col.Output)
-		if col.Alias == "" {
-			if actual := compiled.DSLColumnAliases[key]; actual != "" {
+		switch key {
+		case "ссылка", "ref", "reference":
+			// The compiler emits id for these reserved selection names, even
+			// when used as an explicit alias for a non-reference expression.
+			key = "id"
+		default:
+			if actual := compiled.DSLColumnAliases[key]; col.Alias == "" && actual != "" {
 				key = actual
-			}
-			if len(col.Path) > 0 && (strings.EqualFold(col.Path[len(col.Path)-1], "Ссылка") || strings.EqualFold(col.Path[len(col.Path)-1], "Ref")) {
-				// Implicit reference names are rewritten by the compiler. If more than
-				// one such key exists, require an explicit alias rather than guess it.
-				if len(compiled.RefColumns) != 1 {
-					continue
-				}
-				for actual := range compiled.RefColumns {
-					key = actual
-				}
 			}
 		}
 		if full := compiled.LongIdents[key]; full != "" {
@@ -57,12 +52,12 @@ func reportDetailSortColumns(proj *project.Project, rep *report.Report) map[stri
 	return fields
 }
 
-func detailOnlySortColumns(c *report.Composition, outputs map[string]bool) map[string]bool {
-	if !c.Detail || len(c.Columns) > 0 {
+func detailOnlySortColumns(c *report.Composition, outputs func() map[string]bool) map[string]bool {
+	if !c.Detail || len(c.Groupings) == 0 || len(c.Columns) > 0 || len(c.Sort) == 0 {
 		return nil
 	}
 	fields := map[string]bool{}
-	for name := range outputs {
+	for name := range outputs() {
 		fields[name] = true
 	}
 	// Keep existing grouping/measure validation semantics: this extension is
