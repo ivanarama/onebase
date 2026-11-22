@@ -720,6 +720,10 @@ func formModuleYAMLSchema() *yamlLintSchema {
 		// ok.post — «ОК» проводит документ, как в 1С.
 		"ok":    obj("visible", "post"),
 		"close": action,
+		// copy.visible:false убирает «Скопировать» у документа, который не
+		// копируют по смыслу (звонок, заявка — свидетельство конкретного
+		// обращения, #2241). Право создания и адрес ?copy= не меняются.
+		"copy": action,
 		// attachments.visible:false скрывает панель вложений выбранной
 		// managed-формы (план 181C, #1621); attachment endpoint не меняется.
 		"attachments": action,
