@@ -5,10 +5,10 @@ import (
 	"testing"
 )
 
-// Матрица срез A плана 162: absent/null/{}/карта/compatibility дают один и тот
+// Матрица среза C плана 162: absent/null/{}/карта/compatibility дают один и тот
 // же ответ во всех трёх публичных точках — User.Has, PermissionHas и
-// ProcessorPermissionMode. Неявное allow-all сохраняется до среза C.
-func TestProcessorPermissionModesTransitionMatrix(t *testing.T) {
+// ProcessorPermissionMode. Отсутствующая/null-секция запрещает запуск.
+func TestProcessorPermissionModesFailClosedMatrix(t *testing.T) {
 	mapped := Permission{Processors: map[string][]string{"Импорт": {"run"}}}
 	cases := []struct {
 		name string
@@ -16,8 +16,8 @@ func TestProcessorPermissionModesTransitionMatrix(t *testing.T) {
 		mode string
 		want bool
 	}{
-		{name: "absent section stays allow-all", p: Permission{}, mode: ProcessorModeImplicitAllowAll, want: true},
-		{name: "explicit null section", p: Permission{Processors: nil}, mode: ProcessorModeImplicitAllowAll, want: true},
+		{name: "absent section denies", p: Permission{}, mode: ProcessorModeImplicitDeny, want: false},
+		{name: "explicit null section", p: Permission{Processors: nil}, mode: ProcessorModeImplicitDeny, want: false},
 		{name: "empty map denies", p: Permission{Processors: map[string][]string{}}, mode: ProcessorModeMap, want: false},
 		{name: "map allows listed", p: mapped, mode: ProcessorModeMap, want: true},
 		{name: "map denies other entity", p: mapped, mode: ProcessorModeMap, want: true},
@@ -45,7 +45,7 @@ func TestProcessorPermissionModesTransitionMatrix(t *testing.T) {
 }
 
 // Union ролей: одна роль с {} не запрещает обработку, разрешённую другой
-// явной картой; неявная роль по-прежнему открывает всё.
+// явной картой; неявная роль не добавляет разрешений.
 func TestProcessorPermissionUnion(t *testing.T) {
 	deny := &Role{Name: "Запрет", Permissions: Permission{Processors: map[string][]string{}}}
 	allow := &Role{Name: "Карта", Permissions: Permission{Processors: map[string][]string{"Импорт": {"run"}}}}
@@ -59,8 +59,8 @@ func TestProcessorPermissionUnion(t *testing.T) {
 
 	legacy := &Role{Name: "Legacy"}
 	u2 := &User{Roles: []*Role{deny, legacy}}
-	if !u2.Has("processor", "Пересчёт", "run") {
-		t.Fatal("неявная роль в переходном срезе открывает все обработки")
+	if u2.Has("processor", "Пересчёт", "run") {
+		t.Fatal("неявная роль не должна открывать обработки")
 	}
 }
 
