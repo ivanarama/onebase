@@ -36,16 +36,10 @@ func Recoverer(s *Store, userOf UserFunc) func(http.Handler) http.Handler {
 					panic(rec)
 				}
 				text := fmt.Sprintf("%v", rec)
-				if errors.Is(r.Context().Err(), context.Canceled) {
-					// Клиент уже ушёл (закрыли вкладку, удалили iframe формы,
-					// новый запрос отменил прежний), и обработчик оборвался на
-					// первой же операции с отменённым контекстом — часто паникой
-					// DSL-уровня («Предзагрузка реквизитов …: context canceled»).
-					// Отвечать некому, и это не сбой сервера: как serverError в ui,
-					// отдаём 499 без инцидента и без ERROR, иначе журнал и монитор
-					// получают «паники», которых не было. Контекст запроса
-					// отменяется только разрывом соединения; таймауты операций
-					// дают DeadlineExceeded и остаются инцидентом.
+				cause, _ := rec.(error)
+				if errors.Is(r.Context().Err(), context.Canceled) && errors.Is(cause, context.Canceled) {
+					// Обе ошибки подтверждают отмену операции запроса.
+					// Таймауты и независимые паники остаются инцидентами.
 					oblog.Component("http").Info("запрос прерван клиентом",
 						"where", WhereOf(r), "reason", text)
 					w.WriteHeader(StatusClientClosedRequest)

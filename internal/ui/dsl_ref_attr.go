@@ -254,7 +254,7 @@ func (r *dslRefAttrResolver) preloadBatch(batch map[string]map[string]uuid.UUID)
 			ids = append(ids, id)
 		}
 		if err := r.preloadIDs(entity, ids); err != nil {
-			interpreter.RaiseUserError("Предзагрузка реквизитов " + entity.Name + ": " + err.Error())
+			interpreter.RaiseUserErrorWrap("Предзагрузка реквизитов "+entity.Name+": "+err.Error(), err)
 		}
 	}
 }
