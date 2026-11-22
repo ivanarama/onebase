@@ -41,8 +41,10 @@ func TestUniversalRestoreClearsAttachmentDeletionJobs(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer reader.Close()
 		restored, err := io.ReadAll(reader)
+		if closeErr := reader.Close(); closeErr != nil {
+			t.Errorf("close restored attachment: %v", closeErr)
+		}
 		if err != nil || !bytes.Equal(restored, payload) {
 			t.Fatalf("restored bytes = %q, %v", restored, err)
 		}
