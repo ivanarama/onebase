@@ -7497,7 +7497,10 @@ func rewriteDateDiff(tokens []tok, at int, dialect string, scopedColTypes map[in
 	} else {
 		trunc := func(level string, x []tok) []tok { return frag("date_trunc('"+level+"', ", x, ")") }
 		seconds := func(level string) []tok {
-			return frag("CAST(EXTRACT(EPOCH FROM (", trunc(level, b), " - ", trunc(level, a), ")) AS BIGINT)")
+			// Remove the zone after truncating in session time. Subtraction of
+			// TIMESTAMPTZ would count elapsed time across a daylight saving change.
+			return frag("CAST(EXTRACT(EPOCH FROM (CAST(", trunc(level, b), " AS TIMESTAMP) - CAST(",
+				trunc(level, a), " AS TIMESTAMP))) AS BIGINT)")
 		}
 		ym := func(x []tok) []tok {
 			return frag("(CAST(EXTRACT(YEAR FROM ", x, ") AS INTEGER) * 12 + CAST(EXTRACT(MONTH FROM ", x, ") AS INTEGER) - 1)")
@@ -7521,9 +7524,8 @@ func rewriteDateDiff(tokens []tok, at int, dialect string, scopedColTypes map[in
 	}
 	// Результат — Число, как в 1С: дальнейшее деление дробное
 	// (РАЗНОСТЬДАТ(…, СЕКУНДА) / 60 — минуты с долями, а не целое деление
-	// SQL). REAL и DOUBLE PRECISION оба приходят float64: целые значения
-	// точны и выводятся без дробной части.
-	numeric := " AS DOUBLE PRECISION)"
+	// SQL). PostgreSQL NUMERIC поддерживает также ROUND(число, точность).
+	numeric := " AS NUMERIC)"
 	if dialect == "sqlite" {
 		numeric = " AS REAL)"
 	}
@@ -7543,12 +7545,22 @@ func isCalendarDateFunc(name string) bool {
 
 // dateArgumentIsMoment распознаёт только аргумент, чей моментный тип доказан
 // метаданными/параметром. Системный Период регистра тоже является моментом;
-// одноимённое прикладное поле сначала проверяется по метаданным. Сложные
-// выражения оставляем в прежней семантике fail-closed: угадывание их типа
-// локализовало бы будущий localdate или обычную строку.
+// одноимённое прикладное поле сначала проверяется по метаданным. ЕстьNULL
+// сохраняет моментный тип, когда он доказан для всех её аргументов.
 func dateArgumentIsMoment(tokens []tok, colTypes map[string]metadata.FieldType, qualifiedColTypes map[string]map[string]metadata.FieldType, params map[string]any) bool {
-	for len(tokens) >= 2 && tokens[0].kind == tLParen && tokens[len(tokens)-1].kind == tRParen {
-		tokens = tokens[1 : len(tokens)-1]
+	start, end := trimProjectionParentheses(tokens, 0, len(tokens))
+	tokens = tokens[start:end]
+	if len(tokens) >= 4 && tokens[0].kind == tIdent && tokens[1].kind == tLParen && tokens[len(tokens)-1].kind == tRParen {
+		switch lowerFast(tokens[0].val) {
+		case "естьnull", "isnull", "coalesce":
+			args := splitTopLevelArgs(tokens[2 : len(tokens)-1])
+			for _, arg := range args {
+				if !dateArgumentIsMoment(arg, colTypes, qualifiedColTypes, params) {
+					return false
+				}
+			}
+			return len(args) >= 2
+		}
 	}
 	if len(tokens) == 1 {
 		switch tokens[0].kind {
