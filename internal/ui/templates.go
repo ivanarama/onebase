@@ -11,6 +11,7 @@ import (
 	"unicode"
 
 	"github.com/google/uuid"
+	"github.com/ivantit66/onebase/internal/csssafe"
 	"github.com/ivantit66/onebase/internal/i18n"
 	"github.com/ivantit66/onebase/internal/metadata"
 	processorpkg "github.com/ivantit66/onebase/internal/processor"
@@ -273,6 +274,7 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			}
 			return processorServiceFieldNames(proc.Params)
 		},
+		"entityFormServiceFieldNames":    entityFormServiceFieldNames,
 		"processorExecuteFallbackButton": isProcessorExecuteFallbackButton,
 		"effectiveFormElementReadOnly":   effectiveFormElementReadOnly,
 		"effectiveFormElementRequired":   effectiveFormElementRequired,
@@ -632,6 +634,13 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			}
 			return initial
 		},
+		"fieldLabelStyle": func(el *metadata.FormElement) template.CSS {
+			if color := csssafe.Color(el.LabelColor); color != "" {
+				return template.CSS("color:" + color + ";") //nolint:gosec // G203: цвет проверен csssafe.Color
+			}
+			return ""
+		},
+
 		// fieldTitleRU достаёт ru-вариант из map[string]string или возвращает fallback.
 		"fieldTitleRU": func(m map[string]string, fallback string) string {
 			if v, ok := m["ru"]; ok && v != "" {
@@ -694,6 +703,62 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 		// применяет к ним тот же диапазон 1…4000, что общий layout-контракт.
 		"elPictureSize": func(size int) int {
 			return metadata.NormalizeFormLayoutSize(size)
+		},
+		// pictureAttachmentID — значение реквизита ПолеКартинки с data_path:
+		// идентификатор вложения (UUID) или "". Любое другое значение (адрес,
+		// путь, javascript:) в src/href не попадает — картинка берётся только
+		// из вложений, с их проверкой права чтения владельца.
+		"pictureAttachmentID": func(v any) string {
+			if v == nil {
+				return ""
+			}
+			id, err := uuid.Parse(strings.TrimSpace(fmt.Sprint(v)))
+			if err != nil || id == uuid.Nil {
+				return ""
+			}
+			return id.String()
+		},
+		// pictureRawValue — значение реквизита ПолеКартинки как есть (для
+		// скрытого поля состояния): форма отправляет его неизменным, даже если
+		// это не идентификатор вложения, — иначе сохранение без правки
+		// стирало бы legacy-значение (#2177).
+		"pictureRawValue": func(v any) string {
+			if v == nil {
+				return ""
+			}
+			return fmt.Sprint(v)
+		},
+		// formFieldHasEditor — на форме есть элемент, отправляющий реквизит
+		// field (поле ввода, флажок, список…). Тогда скрытое поле ПолеКартинки
+		// своё значение не отправляет: два контрола одного name дали бы
+		// сохранению старое значение из скрытого поля первым (#2177).
+		"formFieldHasEditor": func(form *metadata.FormModule, field string) bool {
+			if form == nil {
+				return false
+			}
+			editor := map[metadata.FormElementType]bool{
+				metadata.FormElementField: true, metadata.FormElementCheckbox: true,
+				metadata.FormElementSwitch: true, metadata.FormElementInputList: true,
+				metadata.FormElementDatePicker: true, metadata.FormElementFormField: true,
+				metadata.FormElementCodeField: true,
+			}
+			var walk func([]*metadata.FormElement) bool
+			walk = func(elements []*metadata.FormElement) bool {
+				for _, el := range elements {
+					if el == nil {
+						continue
+					}
+					if editor[el.Kind] && (strings.EqualFold(dpFieldName(el.DataPath), field) ||
+						(el.DataPath == "" && strings.EqualFold(el.FieldName, field))) {
+						return true
+					}
+					if walk(el.Children) {
+						return true
+					}
+				}
+				return false
+			}
+			return walk(form.Elements)
 		},
 		// tpGridCSS — стиль контейнера SlickGrid: высота по числу строк либо по
 		// ключу height, ширина и выравнивание — по общему контракту раскладки.
@@ -1746,6 +1811,15 @@ body{padding-bottom:32px}
      обработки) остаются обычными: текст переносится, ширина не схлопывается. */
   main table.tbl-plain{display:table;white-space:normal;overflow:visible}
 }
+/* Embedded applications and the tab workspace own their scrolling, including
+   on narrow screens. Ordinary forms retain the mobile document layout. */
+body:has(.ob-shell-main),body:has(.ob-page-application){height:100dvh;min-height:0;overflow:hidden}
+body:has(.ob-shell-main) .app-body,body:has(.ob-page-application) .app-body{display:flex;flex:1;min-height:0;overflow:hidden}
+body:has(.ob-shell-main) .subsys-bar,body:has(.ob-page-application) .subsys-bar{overflow-x:auto;max-width:100%}
+@media(max-width:820px){
+  body:has(.ob-shell-main) .topbar,body:has(.ob-page-application) .topbar{height:auto;min-height:38px;flex-wrap:wrap}
+  body:has(.ob-shell-main) .topbar-title,body:has(.ob-page-application) .topbar-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+}
 /* ===== Плиточный режим списка (Фаза 1a) ===== */
 .view-switch{display:inline-flex;border:1px solid #e2e8f0;border-radius:7px;overflow:hidden;flex-shrink:0}
 .view-switch .view-btn{padding:6px 11px;color:#64748b;text-decoration:none;font:inherit;font-size:15px;line-height:1;background:#fff;border:0;border-right:1px solid #e2e8f0;cursor:pointer}
@@ -2207,6 +2281,7 @@ const tplList = `
     {{/* На свежем списке строка не выбрана — кнопка приходит с сервера уже
          приглушённой, дальше её состояние ведёт ui.js по выделению. */}}
     <button type="button" id="list-actions-btn" class="btn btn-secondary" data-ob-list-actions aria-disabled="true" title="{{t $.Lang "Сначала выберите строку списка"}}">⚙ {{t $.Lang "Действия"}} ▾</button>
+    {{range .ProcessorLinks}}<a class="btn btn-secondary" href="{{.URL}}">{{.Title}}</a>{{end}}
     <a class="btn btn-sm" href="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}/excel{{listExcelSuffix .Params .ListFormOff}}" style="background:#16a34a;color:#fff" title="{{t $.Lang "Скачать Excel"}}">{{t $.Lang "Excel ↓"}}</a>
   </div>
 </div>
@@ -4540,11 +4615,16 @@ const tplAccountReg = `
 const tplPageCustom = `
 {{define "page-custom"}}
 {{template "head" .}}{{template "nav" .}}
-<main class="main-list">
-  <h2>{{.PageTitle}}</h2>
+{{if .PageApplication}}<style>
+main.ob-page-application{display:flex;flex-direction:column;padding:0;overflow:hidden;min-height:0}
+.ob-page-application .ob-service-frame{flex:1;height:100%;min-height:0}
+</style>{{end}}
+<main class="main-list{{if .PageApplication}} ob-page-application{{end}}">
+  {{if not .PageApplication}}<h2>{{.PageTitle}}</h2>{{end}}
   {{if .PageError}}<div class="error">{{.PageError}}</div>{{end}}
   {{range $i, $b := .PageBlocks}}
-    {{if eq $b.Kind "heading"}}<h3>{{$b.Text}}</h3>
+    {{if eq $b.Kind "application"}}<iframe class="ob-service-frame" src="{{$b.URL}}" title="{{if $b.Title}}{{$b.Title}}{{else}}{{$.PageTitle}}{{end}}" style="display:block;width:100%;border:0;{{if not $.PageApplication}}height:70vh;{{end}}"></iframe>
+    {{else if eq $b.Kind "heading"}}<h3>{{$b.Text}}</h3>
     {{else if eq $b.Kind "paragraph"}}<p style="margin-bottom:14px;color:#334155;font-size:14px;line-height:1.55;max-width:900px">{{$b.Text}}</p>
     {{else if eq $b.Kind "kpi"}}<div class="card" style="display:inline-block;min-width:200px;margin:0 12px 14px 0;padding:16px 20px;vertical-align:top">{{if $b.Label}}<div style="font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:#64748b;font-weight:600;margin-bottom:6px">{{$b.Label}}</div>{{end}}<div style="font-size:28px;font-weight:700;color:#0f172a;line-height:1.1">{{$b.Value}}</div></div>
     {{else if eq $b.Kind "button"}}{{if $b.Action}}<form method="post" action="{{$.PageActionBase}}{{$b.Action}}{{$.PageQuery}}" style="display:inline-block;margin:0 8px 14px 0"><button type="submit" class="btn btn-primary">{{$b.Text}}</button></form>{{else}}<a href="{{$b.URL}}" class="btn btn-primary" style="margin:0 8px 14px 0">{{$b.Text}}</a>{{end}}

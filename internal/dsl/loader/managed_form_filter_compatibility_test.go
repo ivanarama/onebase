@@ -19,6 +19,7 @@ func TestManagedFormLoader_ListFilterWithMainSettings(t *testing.T) {
 				want.RefCardButton = &button
 				want.RefCardButtonAdminOnly = true
 				want.EnterSubmitsForm = true
+				want.ListProcessors = []metadata.FormListProcessor{{Name: "Выгрузка", Title: map[string]string{"ru": "Выгрузить"}}}
 				want.ListFilter = []metadata.FormListCondition{
 					{Field: "Автор", Value: metadata.ListFilterCurrentUser, Roles: []string{"Оператор"}},
 					{Query: "ВЫБРАТЬ Ссылка ИЗ Справочник.Заявка", Removable: true, Label: map[string]string{"ru": "Только мои"}},
@@ -37,7 +38,7 @@ func TestManagedFormLoader_ListFilterWithMainSettings(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !reflect.DeepEqual(got.ListFilter, want.ListFilter) || !reflect.DeepEqual(got.RefCardButton, want.RefCardButton) || got.RefCardButtonAdminOnly != want.RefCardButtonAdminOnly || got.EnterSubmitsForm != want.EnterSubmitsForm {
+			if !reflect.DeepEqual(got.ListProcessors, want.ListProcessors) || !reflect.DeepEqual(got.ListFilter, want.ListFilter) || !reflect.DeepEqual(got.RefCardButton, want.RefCardButton) || got.RefCardButtonAdminOnly != want.RefCardButtonAdminOnly || got.EnterSubmitsForm != want.EnterSubmitsForm {
 				t.Fatalf("settings changed across YAML load: got %+v, want %+v", got, want)
 			}
 		})
