@@ -209,7 +209,7 @@ func protectReadOnlySeen(ec *execCtx, value any, traversal *readOnlyTraversal, d
 		if value == nil {
 			return value
 		}
-		return &DSLError{File: value.File, Line: value.Line, Msg: value.Msg}
+		return &DSLError{File: value.File, Line: value.Line, Msg: value.Msg, explicitMessage: value.explicitMessage}
 	}
 	if obj, ok := value.(This); ok {
 		return &readOnlyThis{ec: ec, inner: obj}
@@ -235,6 +235,7 @@ func trustedReadOnlyCallbackValue(value any) bool {
 	switch value.(type) {
 	case time.Time, *time.Time, time.Duration,
 		decimal.Decimal, *decimal.Decimal,
+		UUIDValue,
 		json.Number,
 		[]byte:
 		return true
