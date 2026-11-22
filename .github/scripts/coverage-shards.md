@@ -7,7 +7,9 @@ execution and atomic-profile validators through `test-coverage-shards.py`.
 The planning job discovers **all** packages plus every top-level Test, Example
 and Fuzz seed suite in UI and launcher. Sorted round-robin partitioning remains
 UI4/launcher2. The seventh shard runs every other package with the existing
-`-p=2`. All seven retain `-race -count=1 -timeout=10m -json -covermode=atomic`.
+`-p=2`. All seven use `-race -count=1 -timeout=20m -json -covermode=atomic`.
+The 20-minute timeout applies to each Go package; each CI shard job retains
+its separate 40-minute deadline.
 Fuzz seeds and subtests execute through their parent suite as before.
 
 ```sh

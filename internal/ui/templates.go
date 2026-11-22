@@ -11,6 +11,7 @@ import (
 	"unicode"
 
 	"github.com/google/uuid"
+	"github.com/ivantit66/onebase/internal/csssafe"
 	"github.com/ivantit66/onebase/internal/i18n"
 	"github.com/ivantit66/onebase/internal/metadata"
 	processorpkg "github.com/ivantit66/onebase/internal/processor"
@@ -268,6 +269,7 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			}
 			return processorServiceFieldNames(proc.Params)
 		},
+		"entityFormServiceFieldNames":    entityFormServiceFieldNames,
 		"processorExecuteFallbackButton": isProcessorExecuteFallbackButton,
 		"effectiveFormElementReadOnly":   effectiveFormElementReadOnly,
 		"effectiveFormElementRequired":   effectiveFormElementRequired,
@@ -564,6 +566,8 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 		// запросе, и первое же сохранение обнулило бы всё скрытое. Отсюда же
 		// граница смысла: item_form — это ВИДИМОСТЬ, а не защита; ограничение
 		// доступа к реквизиту делается политикой поля.
+		// refOptionStyle — style строки выбора ссылки (choice_row_style).
+		"refOptionStyle": refOptionStyle,
 		"itemFormVisible": func(entity *metadata.Entity) []itemFormField {
 			vis, _ := splitItemFormFields(entity)
 			return vis
@@ -625,6 +629,13 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			}
 			return initial
 		},
+		"fieldLabelStyle": func(el *metadata.FormElement) template.CSS {
+			if color := csssafe.Color(el.LabelColor); color != "" {
+				return template.CSS("color:" + color + ";") //nolint:gosec // G203: цвет проверен csssafe.Color
+			}
+			return ""
+		},
+
 		// fieldTitleRU достаёт ru-вариант из map[string]string или возвращает fallback.
 		"fieldTitleRU": func(m map[string]string, fallback string) string {
 			if v, ok := m["ru"]; ok && v != "" {
@@ -687,6 +698,62 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 		// применяет к ним тот же диапазон 1…4000, что общий layout-контракт.
 		"elPictureSize": func(size int) int {
 			return metadata.NormalizeFormLayoutSize(size)
+		},
+		// pictureAttachmentID — значение реквизита ПолеКартинки с data_path:
+		// идентификатор вложения (UUID) или "". Любое другое значение (адрес,
+		// путь, javascript:) в src/href не попадает — картинка берётся только
+		// из вложений, с их проверкой права чтения владельца.
+		"pictureAttachmentID": func(v any) string {
+			if v == nil {
+				return ""
+			}
+			id, err := uuid.Parse(strings.TrimSpace(fmt.Sprint(v)))
+			if err != nil || id == uuid.Nil {
+				return ""
+			}
+			return id.String()
+		},
+		// pictureRawValue — значение реквизита ПолеКартинки как есть (для
+		// скрытого поля состояния): форма отправляет его неизменным, даже если
+		// это не идентификатор вложения, — иначе сохранение без правки
+		// стирало бы legacy-значение (#2177).
+		"pictureRawValue": func(v any) string {
+			if v == nil {
+				return ""
+			}
+			return fmt.Sprint(v)
+		},
+		// formFieldHasEditor — на форме есть элемент, отправляющий реквизит
+		// field (поле ввода, флажок, список…). Тогда скрытое поле ПолеКартинки
+		// своё значение не отправляет: два контрола одного name дали бы
+		// сохранению старое значение из скрытого поля первым (#2177).
+		"formFieldHasEditor": func(form *metadata.FormModule, field string) bool {
+			if form == nil {
+				return false
+			}
+			editor := map[metadata.FormElementType]bool{
+				metadata.FormElementField: true, metadata.FormElementCheckbox: true,
+				metadata.FormElementSwitch: true, metadata.FormElementInputList: true,
+				metadata.FormElementDatePicker: true, metadata.FormElementFormField: true,
+				metadata.FormElementCodeField: true,
+			}
+			var walk func([]*metadata.FormElement) bool
+			walk = func(elements []*metadata.FormElement) bool {
+				for _, el := range elements {
+					if el == nil {
+						continue
+					}
+					if editor[el.Kind] && (strings.EqualFold(dpFieldName(el.DataPath), field) ||
+						(el.DataPath == "" && strings.EqualFold(el.FieldName, field))) {
+						return true
+					}
+					if walk(el.Children) {
+						return true
+					}
+				}
+				return false
+			}
+			return walk(form.Elements)
 		},
 		// tpGridCSS — стиль контейнера SlickGrid: высота по числу строк либо по
 		// ключу height, ширина и выравнивание — по общему контракту раскладки.
@@ -1723,6 +1790,15 @@ body{padding-bottom:32px}
      обработки) остаются обычными: текст переносится, ширина не схлопывается. */
   main table.tbl-plain{display:table;white-space:normal;overflow:visible}
 }
+/* Embedded applications and the tab workspace own their scrolling, including
+   on narrow screens. Ordinary forms retain the mobile document layout. */
+body:has(.ob-shell-main),body:has(.ob-page-application){height:100dvh;min-height:0;overflow:hidden}
+body:has(.ob-shell-main) .app-body,body:has(.ob-page-application) .app-body{display:flex;flex:1;min-height:0;overflow:hidden}
+body:has(.ob-shell-main) .subsys-bar,body:has(.ob-page-application) .subsys-bar{overflow-x:auto;max-width:100%}
+@media(max-width:820px){
+  body:has(.ob-shell-main) .topbar,body:has(.ob-page-application) .topbar{height:auto;min-height:38px;flex-wrap:wrap}
+  body:has(.ob-shell-main) .topbar-title,body:has(.ob-page-application) .topbar-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+}
 /* ===== Плиточный режим списка (Фаза 1a) ===== */
 .view-switch{display:inline-flex;border:1px solid #e2e8f0;border-radius:7px;overflow:hidden;flex-shrink:0}
 .view-switch .view-btn{padding:6px 11px;color:#64748b;text-decoration:none;font:inherit;font-size:15px;line-height:1;background:#fff;border:0;border-right:1px solid #e2e8f0;cursor:pointer}
@@ -2227,7 +2303,7 @@ const tplList = `
           <select id="flt-{{.Name}}" name="f.{{.Name}}" data-ref-entity="{{.RefEntity}}" style="flex:1;min-width:0">
             <option value="">{{t $.Lang "— все —"}}</option>
             {{range index $refOpts .Name}}
-            <option value="{{index . "id"}}" {{if eq (index . "id") (filterVal $params $f.Name).Value}}selected{{end}}>{{index . "_label"}}</option>
+            <option value="{{index . "id"}}"{{refOptionStyle .}} {{if eq (index . "id") (filterVal $params $f.Name).Value}}selected{{end}}>{{index . "_label"}}</option>
             {{end}}
           </select>
           <button type="button" data-ob-ref-picker="flt-{{$f.Name}}" style="padding:7px 10px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px;flex-shrink:0" title="{{t $.Lang "Выбрать из списка"}}">...</button>
@@ -2649,7 +2725,7 @@ const tplForm = `
   <select name="parent_id">
     <option value="">{{t $.Lang "— корень —"}}</option>
     {{range .FolderOptions}}
-    <option value="{{index . "id"}}" {{if eq (index . "id") (index $.Values "parent_id")}}selected{{end}}>{{index . "_label"}}</option>
+    <option value="{{index . "id"}}"{{refOptionStyle .}} {{if eq (index . "id") (index $.Values "parent_id")}}selected{{end}}>{{index . "_label"}}</option>
     {{end}}
   </select>
 </div>
@@ -2668,7 +2744,7 @@ const tplForm = `
       <select id="ref-{{$fn}}"{{if not $ro}} name="{{$fn}}"{{end}} style="flex:1" data-ref-entity="{{.RefEntity}}"{{if $.RefFilter}}{{with index $.RefFilter $fn}} data-ref-filter="{{.}}"{{end}}{{end}}{{if and (not $ro) (.InlineCreateEnabled false) (refWriteAllowed $.RefWriteAccess .RefEntity)}} data-ref-allow-create="1"{{end}}{{if $ro}} disabled{{end}}>
         <option value="">{{t $.Lang "— выбрать —"}}</option>
         {{range index $.RefOptions $fn}}
-        <option value="{{index . "id"}}" {{if eq (index . "id") (index $.Values $fn)}}selected{{end}}>{{index . "_label"}}</option>
+        <option value="{{index . "id"}}"{{refOptionStyle .}} {{if eq (index . "id") (index $.Values $fn)}}selected{{end}}>{{index . "_label"}}</option>
         {{end}}
       </select>
       {{if not $ro}}<button type="button" data-ob-ref-picker="ref-{{$fn}}" style="padding:8px 12px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px;white-space:nowrap;flex-shrink:0" title="{{t $.Lang "Выбрать из списка"}}">...</button>{{end}}
@@ -2742,7 +2818,7 @@ const tplForm = `
             <select name="tp.{{$tpName}}.{{$i}}.{{$fn}}" style="flex:1" data-ref-entity="{{.RefEntity}}"{{if $.RefFilter}}{{with index $.RefFilter (printf "%s.%s" $tpName $fn)}} data-ref-filter="{{.}}"{{end}}{{end}}{{if and (.InlineCreateEnabled true) (refWriteAllowed $.RefWriteAccess .RefEntity)}} data-ref-allow-create="1"{{end}}{{if $tpReadOnly}} disabled{{end}}>
               <option value="">{{t $.Lang "— выбрать —"}}</option>
               {{range index $tpRef $fn}}
-              <option value="{{index . "id"}}" {{if eq (str (index . "id")) (refID (index $row $fn))}}selected{{end}}>{{index . "_label"}}</option>
+              <option value="{{index . "id"}}"{{refOptionStyle .}} {{if eq (str (index . "id")) (refID (index $row $fn))}}selected{{end}}>{{index . "_label"}}</option>
               {{end}}
             </select>
             <button type="button" data-ob-ref-picker-self style="padding:4px 8px;border:1px solid #e2e8f0;border-radius:5px;background:#f8fafc;cursor:pointer;font-size:12px;flex-shrink:0" title="{{t $.Lang "Выбрать из списка"}}"{{if $tpReadOnly}} disabled{{end}}>...</button>
@@ -3008,7 +3084,7 @@ const tplReport = `
           <select name="{{$pname}}" id="rp-{{$pname}}" style="flex:1;min-width:0" data-ref-entity="{{$p.RefEntity}}">
             <option value="">{{t $.Lang "— все —"}}</option>
             {{range $p.Opts}}
-              <option value="{{index . "id"}}" {{if eq $pval (str (index . "id"))}}selected{{end}}>{{index . "_label"}}</option>
+              <option value="{{index . "id"}}"{{refOptionStyle .}} {{if eq $pval (str (index . "id"))}}selected{{end}}>{{index . "_label"}}</option>
             {{end}}
           </select>
           <button type="button" data-ob-ref-picker="rp-{{$pname}}" style="padding:6px 10px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px;flex-shrink:0" title="{{t $.Lang "Выбрать из списка"}}">...</button>
@@ -3173,7 +3249,7 @@ const tplRegister = `
     <div style="display:flex;gap:4px;align-items:center">
       <select id="regflt-{{.Name}}" name="flt_{{.Name}}" data-ref-entity="{{.RefEntity}}" style="padding:6px 10px;border:1px solid #e2e8f0;border-radius:6px;font-size:13px;min-width:0">
         <option value="">— {{t $.Lang "все"}} —</option>
-        {{$cur := index $flt .Name}}{{range index $refOpts .Name}}<option value="{{index . "id"}}" {{if eq (str (index . "id")) $cur}}selected{{end}}>{{index . "_label"}}</option>{{end}}
+        {{$cur := index $flt .Name}}{{range index $refOpts .Name}}<option value="{{index . "id"}}"{{refOptionStyle .}} {{if eq (str (index . "id")) $cur}}selected{{end}}>{{index . "_label"}}</option>{{end}}
       </select>
       <button type="button" data-ob-ref-picker="regflt-{{.Name}}" style="padding:6px 9px;border:1px solid #e2e8f0;border-radius:6px;background:#f8fafc;cursor:pointer;font-size:12px;flex-shrink:0" title="{{t $.Lang "Выбрать из списка"}}">...</button>
     </div>
@@ -3352,7 +3428,7 @@ const tplProcessor = `
         <div style="display:flex;gap:6px;align-items:center">
           <select id="pp-{{$pname}}" name="{{$pname}}" style="flex:1" data-ref-entity="{{index $.ProcessorRefEntity $pname}}" {{if .Required}}required{{end}}>
             <option value="">{{t $.Lang "— выбрать —"}}</option>
-            {{with index $.RefOptions $pname}}{{range .}}<option value="{{index . "id"}}" {{if eq (index . "id") (index $.ParamValues $pname)}}selected{{end}}>{{index . "_label"}}</option>{{end}}{{end}}
+            {{with index $.RefOptions $pname}}{{range .}}<option value="{{index . "id"}}"{{refOptionStyle .}} {{if eq (index . "id") (index $.ParamValues $pname)}}selected{{end}}>{{index . "_label"}}</option>{{end}}{{end}}
           </select>
           <button type="button" data-ob-ref-picker="pp-{{$pname}}" style="padding:6px 10px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px;flex-shrink:0" title="{{t $.Lang "Выбрать из списка"}}">...</button>
           <button type="button" data-ob-ref-current="pp-{{$pname}}" style="padding:6px 9px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px;flex-shrink:0" title="{{t $.Lang "Открыть карточку"}}">🔍</button>
@@ -3763,7 +3839,7 @@ const tplInfoReg = `
     <div style="display:flex;gap:4px;align-items:center">
       <select name="{{$dn}}" id="ird-{{$dn}}" style="flex:1;min-width:0" data-ref-entity="{{.RefEntity}}">
         <option value="">{{t $.Lang "— выбрать —"}}</option>
-        {{range index $.RefOpts $dn}}<option value="{{index . "id"}}" {{if eq (index $.Values $dn) (index . "id")}}selected{{end}}>{{index . "_label"}}</option>{{end}}
+        {{range index $.RefOpts $dn}}<option value="{{index . "id"}}"{{refOptionStyle .}} {{if eq (index $.Values $dn) (index . "id")}}selected{{end}}>{{index . "_label"}}</option>{{end}}
       </select>
       <button type="button" data-ob-ref-picker="ird-{{$dn}}" style="padding:6px 10px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px;flex-shrink:0" title="{{t $.Lang "Выбрать из списка"}}">...</button>
       <button type="button" data-ob-ref-current="ird-{{$dn}}" style="padding:6px 9px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px;flex-shrink:0" title="{{t $.Lang "Открыть карточку"}}">🔍</button>
@@ -3816,7 +3892,7 @@ const tplConstants = `
       <select id="const-{{.Name}}" name="{{.Name}}" data-ref-entity="{{.RefEntity}}" style="flex:1;min-width:0"{{if .Required}} required{{end}}>
         <option value="">{{t $.Lang "— не выбрано —"}}</option>
         {{range index $.RefOpts .Name}}
-        <option value="{{index . "id"}}" {{if eq (index . "id") (index $.Values $c.Name)}}selected{{end}}>{{index . "_label"}}</option>
+        <option value="{{index . "id"}}"{{refOptionStyle .}} {{if eq (index . "id") (index $.Values $c.Name)}}selected{{end}}>{{index . "_label"}}</option>
         {{end}}
       </select>
       <button type="button" data-ob-ref-picker="const-{{$c.Name}}" style="padding:8px 12px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px;flex-shrink:0" title="{{t $.Lang "Выбрать из списка"}}">...</button>
@@ -3891,7 +3967,7 @@ const tplJournal = `
         <select id="jflt-{{$f}}" name="f.{{$f}}" data-ref-entity="{{index $.FilterRefEntities $f}}" style="flex:1;min-width:0">
           <option value="">{{t $.Lang "— все —"}}</option>
           {{range index $.FilterOptions $f}}
-          <option value="{{index . "id"}}" {{if eq (index . "id") (filterVal $params $f).Value}}selected{{end}}>{{index . "_label"}}</option>
+          <option value="{{index . "id"}}"{{refOptionStyle .}} {{if eq (index . "id") (filterVal $params $f).Value}}selected{{end}}>{{index . "_label"}}</option>
           {{end}}
         </select>
         <button type="button" data-ob-ref-picker="jflt-{{$f}}" style="padding:7px 10px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px;flex-shrink:0" title="{{t $.Lang "Выбрать из списка"}}">...</button>
@@ -4490,11 +4566,16 @@ const tplAccountReg = `
 const tplPageCustom = `
 {{define "page-custom"}}
 {{template "head" .}}{{template "nav" .}}
-<main class="main-list">
-  <h2>{{.PageTitle}}</h2>
+{{if .PageApplication}}<style>
+main.ob-page-application{display:flex;flex-direction:column;padding:0;overflow:hidden;min-height:0}
+.ob-page-application .ob-service-frame{flex:1;height:100%;min-height:0}
+</style>{{end}}
+<main class="main-list{{if .PageApplication}} ob-page-application{{end}}">
+  {{if not .PageApplication}}<h2>{{.PageTitle}}</h2>{{end}}
   {{if .PageError}}<div class="error">{{.PageError}}</div>{{end}}
   {{range $i, $b := .PageBlocks}}
-    {{if eq $b.Kind "heading"}}<h3>{{$b.Text}}</h3>
+    {{if eq $b.Kind "application"}}<iframe class="ob-service-frame" src="{{$b.URL}}" title="{{if $b.Title}}{{$b.Title}}{{else}}{{$.PageTitle}}{{end}}" style="display:block;width:100%;border:0;{{if not $.PageApplication}}height:70vh;{{end}}"></iframe>
+    {{else if eq $b.Kind "heading"}}<h3>{{$b.Text}}</h3>
     {{else if eq $b.Kind "paragraph"}}<p style="margin-bottom:14px;color:#334155;font-size:14px;line-height:1.55;max-width:900px">{{$b.Text}}</p>
     {{else if eq $b.Kind "kpi"}}<div class="card" style="display:inline-block;min-width:200px;margin:0 12px 14px 0;padding:16px 20px;vertical-align:top">{{if $b.Label}}<div style="font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:#64748b;font-weight:600;margin-bottom:6px">{{$b.Label}}</div>{{end}}<div style="font-size:28px;font-weight:700;color:#0f172a;line-height:1.1">{{$b.Value}}</div></div>
     {{else if eq $b.Kind "button"}}{{if $b.Action}}<form method="post" action="{{$.PageActionBase}}{{$b.Action}}{{$.PageQuery}}" style="display:inline-block;margin:0 8px 14px 0"><button type="submit" class="btn btn-primary">{{$b.Text}}</button></form>{{else}}<a href="{{$b.URL}}" class="btn btn-primary" style="margin:0 8px 14px 0">{{$b.Text}}</a>{{end}}

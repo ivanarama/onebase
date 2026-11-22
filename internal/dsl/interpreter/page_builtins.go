@@ -2,6 +2,8 @@ package interpreter
 
 import (
 	"fmt"
+	"net/url"
+	"path"
 	"strconv"
 	"strings"
 
@@ -23,7 +25,7 @@ import (
 // PageBlock — один отрендеренный блок страницы. Экспортирован, чтобы UI-слой
 // мог пройтись по результату (PageBuilder.Blocks()). Поля заполняются по Kind.
 type PageBlock struct {
-	Kind string // heading | paragraph | kpi | table | button | divider | raw
+	Kind string // heading | paragraph | kpi | table | button | divider | raw | application
 
 	Text   string // heading/paragraph/button: текст; kpi: подпись не здесь (см. Label)
 	URL    string // button: адрес перехода
@@ -128,6 +130,16 @@ func (b *DSLPageBuilder) CallMethod(name string, args []any) any {
 		return b
 	case "сыройhtml", "добавитьсыройhtml", "rawhtml", "addrawhtml":
 		b.blocks = append(b.blocks, PageBlock{Kind: "raw", HTML: sanitizePageHTML(argStr(args, 0))})
+		return b
+	case "встроитьсервис", "embedservice":
+		src := argStr(args, 0)
+		u, err := url.ParseRequestURI(src)
+		if err != nil || u.IsAbs() || u.Host != "" || u.RawPath != "" ||
+			!strings.HasPrefix(u.Path, "/hs/") || u.Path == "/hs/" || strings.ContainsAny(src, "\\\r\n") ||
+			path.Clean(u.Path) != strings.TrimSuffix(u.Path, "/") {
+			panic(userError{Msg: "Страница.ВстроитьСервис: требуется локальный путь /hs/ без переходов между каталогами"})
+		}
+		b.blocks = append(b.blocks, PageBlock{Kind: "application", URL: src, Title: argStr(args, 1)})
 		return b
 	case "таблица", "table":
 		b.blocks = append(b.blocks, PageBlock{Kind: "table", Title: argStr(args, 0)})
