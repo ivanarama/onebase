@@ -10,6 +10,7 @@ import argparse
 import hashlib
 import importlib.util
 import json
+import os
 from pathlib import Path
 import re
 import shutil
@@ -22,6 +23,7 @@ spec = importlib.util.spec_from_file_location("coverage_engine", ENGINE)
 engine = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(engine)
 LABELS = ["other", "ui-1", "ui-2", "ui-3", "ui-4", "launcher-1", "launcher-2"]
+POSTGRES_UI_SHARDS = [label for label in LABELS if label.startswith("ui-")]
 # The complete pipelinehealth package includes serial public-CLI/process tests.
 # It exceeds 10 minutes with race/atomic coverage; retain a finite package limit
 # while preserving every test and the existing 40-minute shard job deadline.
@@ -116,17 +118,35 @@ def selection(plan, label):
     return [item["package"]], item["groups"][int(number) - 1], series
 
 
+def discover(root, label, package, count):
+    listing = root / (label + "-list.jsonl")
+    engine.command(["go", "test", *FLAGS, "-list", "^(Test|Example|Fuzz)", package], listing)
+    names = engine.inventory(listing, package)
+    return dict(package=package, names=names, groups=engine.partition(names, count))
+
+
+def run_filter(names):
+    return [] if names is None else ["-run", "^(?:" + "|".join(re.escape(n) for n in names) + ")$"]
+
+
+def postgres_ui(root, shard):
+    require(os.environ.get("TEST_DATABASE_URL"), "TEST_DATABASE_URL is required for PostgreSQL UI tests")
+    require(shutil.which("node") is not None, "real Node.js is required")
+    root.mkdir(parents=True, exist_ok=False)
+    groups = discover(root, "ui", engine.UI, len(POSTGRES_UI_SHARDS))["groups"]
+    names = groups[POSTGRES_UI_SHARDS.index(shard)]
+    journal = root / "tests.jsonl"
+    engine.command(["go", "test", *FLAGS, *run_filter(names), engine.UI], journal)
+    engine.execution(journal, [engine.UI], names)
+    print(f"PASS: {shard} executed all {len(names)} selected UI suites")
+
+
 def prepare(root):
     root.mkdir(parents=True, exist_ok=False)
     current = context()
     engine.command(["go", "list", "./..."], root / "packages.log")
     packages = (root / "packages.log").read_text(encoding="utf-8").splitlines()
-    series = {}
-    for label, package, count in engine.SERIES:
-        listing = root / (label + "-list.jsonl")
-        engine.command(["go", "test", *FLAGS, "-list", "^(Test|Example|Fuzz)", package], listing)
-        names = engine.inventory(listing, package)
-        series[label] = dict(package=package, names=names, groups=engine.partition(names, count))
+    series = {label: discover(root, label, package, count) for label, package, count in engine.SERIES}
     plan = dict(schema="race-coverage-plan-v1", context=current, packages=packages, series=series)
     validate(plan)
     path = root / "plan.json"
@@ -138,10 +158,9 @@ def run(plan, plan_sha, label, root):
     root.mkdir(parents=True, exist_ok=False)
     packages, names, _ = selection(plan, label)
     package_limit = ["-p=2"] if names is None else []
-    run_filter = [] if names is None else ["-run", "^(?:" + "|".join(re.escape(n) for n in names) + ")$"]
     journal, coverage = root / "tests.jsonl", root / "coverage.out"
     engine.command(["go", "test", *FLAGS, *package_limit, "-covermode=atomic",
-                    f"-coverprofile={coverage}", *run_filter, *packages], journal)
+                    f"-coverprofile={coverage}", *run_filter(names), *packages], journal)
     engine.execution(journal, packages, names)
     engine.profile(coverage)
     receipt = dict(schema="race-coverage-shard-v1", label=label, plan_sha256=plan_sha,
@@ -179,6 +198,9 @@ def main():
     sub = parser.add_subparsers(dest="mode", required=True)
     plan_parser = sub.add_parser("plan")
     plan_parser.add_argument("--artifacts", type=Path, default=Path("coverage-plan"))
+    pg_parser = sub.add_parser("postgres-ui", help="run one UI group against SQLite and PostgreSQL")
+    pg_parser.add_argument("--shard", choices=POSTGRES_UI_SHARDS, required=True)
+    pg_parser.add_argument("--artifacts", type=Path, default=Path("postgres-ui-result"))
     for mode in ("run", "merge"):
         child = sub.add_parser(mode)
         child.add_argument("--plan", type=Path, required=True)
@@ -190,6 +212,9 @@ def main():
             child.add_argument("--output", type=Path, default=Path("coverage.out"))
             child.add_argument("--artifact-prefix", default="")
     args = parser.parse_args()
+    if args.mode == "postgres-ui":
+        postgres_ui(args.artifacts, args.shard)
+        return
     if args.mode == "plan":
         prepare(args.artifacts)
         return
