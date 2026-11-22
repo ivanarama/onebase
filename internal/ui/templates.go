@@ -10,6 +10,8 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/google/uuid"
+	"github.com/ivantit66/onebase/internal/csssafe"
 	"github.com/ivantit66/onebase/internal/i18n"
 	"github.com/ivantit66/onebase/internal/metadata"
 	processorpkg "github.com/ivantit66/onebase/internal/processor"
@@ -37,6 +39,10 @@ type managedTPColumnJSON struct {
 	// по-прежнему сериализуется в tp_json (план 154). Ровно наоборот к Virtual:
 	// та видима и не отправляется, эта отправляется и не видима.
 	Hidden bool `json:"hidden,omitempty"`
+	// TitleFrom — заголовок взят из реквизита формы (title_from) и потому
+	// приходит как текст: клиент экранирует его перед выводом в шапку
+	// SlickGrid, которая рисует подпись как HTML.
+	TitleFrom bool `json:"titleFrom,omitempty"`
 	// Index — позиция реквизита в метаданных табличной части. Клиент кладёт её
 	// в _tp_col_index: сервер сверяет индекс с порядком метаданных, а порядок
 	// показа с ним больше не совпадает. Для виртуальной колонки — -1.
@@ -256,12 +262,14 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			}
 			return processorFileContentName(proc.Params, name)
 		},
+		"entityQuestionFieldsName": entityQuestionFieldsName,
 		"processorServiceFieldNames": func(proc *processorpkg.Processor) map[string]string {
 			if proc == nil {
 				return nil
 			}
 			return processorServiceFieldNames(proc.Params)
 		},
+		"entityFormServiceFieldNames":    entityFormServiceFieldNames,
 		"processorExecuteFallbackButton": isProcessorExecuteFallbackButton,
 		"effectiveFormElementReadOnly":   effectiveFormElementReadOnly,
 		"effectiveFormElementRequired":   effectiveFormElementRequired,
@@ -392,6 +400,11 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 		},
 		"isRichText": func(t any) bool { return fmt.Sprintf("%v", t) == string(metadata.FieldTypeRichText) },
 		"isImage":    func(t any) bool { return fmt.Sprintf("%v", t) == string(metadata.FieldTypeImage) },
+		"isImageRef": func(raw any) bool {
+			value := fmt.Sprint(raw)
+			_, err := uuid.Parse(value)
+			return len(value) == 36 && err == nil
+		},
 		"fieldNamesCSV": func(fields []metadata.Field) string {
 			names := make([]string, 0, len(fields))
 			for _, f := range fields {
@@ -553,6 +566,8 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 		// запросе, и первое же сохранение обнулило бы всё скрытое. Отсюда же
 		// граница смысла: item_form — это ВИДИМОСТЬ, а не защита; ограничение
 		// доступа к реквизиту делается политикой поля.
+		// refOptionStyle — style строки выбора ссылки (choice_row_style).
+		"refOptionStyle": refOptionStyle,
 		"itemFormVisible": func(entity *metadata.Entity) []itemFormField {
 			vis, _ := splitItemFormFields(entity)
 			return vis
@@ -614,6 +629,13 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			}
 			return initial
 		},
+		"fieldLabelStyle": func(el *metadata.FormElement) template.CSS {
+			if color := csssafe.Color(el.LabelColor); color != "" {
+				return template.CSS("color:" + color + ";") //nolint:gosec // G203: цвет проверен csssafe.Color
+			}
+			return ""
+		},
+
 		// fieldTitleRU достаёт ru-вариант из map[string]string или возвращает fallback.
 		"fieldTitleRU": func(m map[string]string, fallback string) string {
 			if v, ok := m["ru"]; ok && v != "" {
@@ -676,6 +698,62 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 		// применяет к ним тот же диапазон 1…4000, что общий layout-контракт.
 		"elPictureSize": func(size int) int {
 			return metadata.NormalizeFormLayoutSize(size)
+		},
+		// pictureAttachmentID — значение реквизита ПолеКартинки с data_path:
+		// идентификатор вложения (UUID) или "". Любое другое значение (адрес,
+		// путь, javascript:) в src/href не попадает — картинка берётся только
+		// из вложений, с их проверкой права чтения владельца.
+		"pictureAttachmentID": func(v any) string {
+			if v == nil {
+				return ""
+			}
+			id, err := uuid.Parse(strings.TrimSpace(fmt.Sprint(v)))
+			if err != nil || id == uuid.Nil {
+				return ""
+			}
+			return id.String()
+		},
+		// pictureRawValue — значение реквизита ПолеКартинки как есть (для
+		// скрытого поля состояния): форма отправляет его неизменным, даже если
+		// это не идентификатор вложения, — иначе сохранение без правки
+		// стирало бы legacy-значение (#2177).
+		"pictureRawValue": func(v any) string {
+			if v == nil {
+				return ""
+			}
+			return fmt.Sprint(v)
+		},
+		// formFieldHasEditor — на форме есть элемент, отправляющий реквизит
+		// field (поле ввода, флажок, список…). Тогда скрытое поле ПолеКартинки
+		// своё значение не отправляет: два контрола одного name дали бы
+		// сохранению старое значение из скрытого поля первым (#2177).
+		"formFieldHasEditor": func(form *metadata.FormModule, field string) bool {
+			if form == nil {
+				return false
+			}
+			editor := map[metadata.FormElementType]bool{
+				metadata.FormElementField: true, metadata.FormElementCheckbox: true,
+				metadata.FormElementSwitch: true, metadata.FormElementInputList: true,
+				metadata.FormElementDatePicker: true, metadata.FormElementFormField: true,
+				metadata.FormElementCodeField: true,
+			}
+			var walk func([]*metadata.FormElement) bool
+			walk = func(elements []*metadata.FormElement) bool {
+				for _, el := range elements {
+					if el == nil {
+						continue
+					}
+					if editor[el.Kind] && (strings.EqualFold(dpFieldName(el.DataPath), field) ||
+						(el.DataPath == "" && strings.EqualFold(el.FieldName, field))) {
+						return true
+					}
+					if walk(el.Children) {
+						return true
+					}
+				}
+				return false
+			}
+			return walk(form.Elements)
 		},
 		// tpGridCSS — стиль контейнера SlickGrid: высота по числу строк либо по
 		// ключу height, ширина и выравнивание — по общему контракту раскладки.
@@ -1240,6 +1318,8 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 					Enum:        strings.HasPrefix(string(field.Type), "enum:"),
 					Hidden:      column.Hidden,
 					Index:       column.Index,
+					TitleFrom:   column.Element != nil && strings.TrimSpace(column.Element.TitleFrom) != "",
+					Width:       column.Width(),
 				})
 			}
 			// Виртуальные колонки идут ПОСЛЕ реквизитов: порядок хранимых колонок
@@ -1265,6 +1345,13 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			return template.JS(b) //nolint:gosec // G203: JSON сформирован encoding/json
 		},
 		"managedTPColumnPlan": managedTPColumnPlan,
+		// messagesMeta — режим показа сообщений интерфейса (home_page: messages).
+		"messagesMeta": messagesMetaHTML,
+		// managedTPColumnsTitled — заголовки колонок из title_from по значениям
+		// формы при отрисовке; после событий их присылает columnTitles.
+		"managedTPColumnsTitled": func(plan []managedTPColumn, values any) []managedTPColumn {
+			return managedTPColumnsTitled(plan, values)
+		},
 		"tpChoiceContexts": func(ctx map[string]any, table *metadata.FormElement) map[string]string {
 			all, _ := ctx["TPChoices"].(map[*metadata.FormElement]*tpChoiceRender)
 			if all[table] != nil {
@@ -1351,6 +1438,7 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 		// Решается по составу маски, а не отдельным ключом: «00.00.00» — это
 		// заведомо цифры, и заставлять автора объявлять это второй раз незачем.
 		"inputMaskDigitsOnly": metadata.InputMaskDigitsOnly,
+		"inputAutocomplete":   inputAutocomplete,
 		"inputMaskHint":       metadata.InputMaskHint,
 		"wcell":               widgetCell,
 		"echartsJSON":         echartsJSON,
@@ -1506,8 +1594,20 @@ const tplHead = `
 <script type="application/json" id="ob-ui-messages">{{jsJSON (dict
   "closeNotConfirmed" (t (or $.Lang "ru") "Форма не закрыта: сервер не подтвердил закрытие.")
   "unsavedClose" (t (or $.Lang "ru") "Данные были изменены и не записаны. Закрыть форму?")
+  "imageClose" (t (or $.Lang "ru") "Закрыть просмотр изображения")
+  "imagePrevious" (t (or $.Lang "ru") "Предыдущее изображение")
+  "imageNext" (t (or $.Lang "ru") "Следующее изображение")
+  "imageZoomIn" (t (or $.Lang "ru") "Увеличить изображение")
+  "imageZoomOut" (t (or $.Lang "ru") "Уменьшить изображение")
+  "imageFit" (t (or $.Lang "ru") "Вписать изображение")
+  "imageOriginal" (t (or $.Lang "ru") "Исходный размер изображения")
+  "imageNewTab" (t (or $.Lang "ru") "Открыть изображение в новой вкладке")
+  "imageDownload" (t (or $.Lang "ru") "Скачать изображение")
+  "imageLoading" (t (or $.Lang "ru") "Загрузка изображения…")
+  "imageError" (t (or $.Lang "ru") "Не удалось загрузить изображение")
+  "imageArea" (t (or $.Lang "ru") "Область просмотра изображения")
 )}}</script>
-<script src="/static/ui.js"></script>
+{{messagesMeta .}}<script src="/static/ui.js"></script>
 <style>
 .ob-embedded .topbar,.ob-embedded .subsys-bar,.ob-embedded #ob-nav{display:none!important}
 *{box-sizing:border-box;margin:0;padding:0}
@@ -1546,11 +1646,11 @@ body{font-family:system-ui,sans-serif;display:flex;flex-direction:column;height:
 .sys-mode-block .sys-btn{margin-top:6px;background:#e2e8f0;color:#334155;font-size:12px;padding:6px 10px}
 .sys-logout{position:sticky;bottom:-4px;background:#fff;z-index:1;margin:0;padding:0;box-shadow:0 -3px 8px rgba(15,23,42,.06)}
 .tbl{width:100%;border-collapse:collapse}
-.tbl th{text-align:left;padding:8px 10px;border-bottom:2px solid #e2e8f0;color:#64748b;font-weight:600;font-size:12px;position:sticky;top:0;background:#fff}
+.tbl th{text-align:left;padding:8px 10px;border-bottom:2px solid #cbd5e1;color:#334155;font-weight:600;font-size:12px;position:sticky;top:0;background:#eef2f7}
 .tbl td{padding:6px 10px;border-bottom:1px solid #f1f5f9;color:#334155;font-size:13px}
 .tbl tr:hover td{background:#f8fafc}
 .report-composed{width:100%;border-collapse:collapse;font-size:13px}
-.report-composed thead th{position:sticky;top:38px;background:#fff;z-index:5;text-align:left;padding:8px 10px;border-bottom:2px solid #e2e8f0;color:#64748b;font-weight:600;font-size:12px}
+.report-composed thead th{position:sticky;top:38px;background:#eef2f7;z-index:5;text-align:left;padding:8px 10px;border-bottom:2px solid #cbd5e1;color:#334155;font-weight:600;font-size:12px}
 .report-composed td{padding:6px 10px;border-bottom:1px solid #f1f5f9;color:#334155}
 .report-composed td.num{font-variant-numeric:tabular-nums}
 .report-composed tr.grp:hover td{background:#f8fafc}
@@ -1590,8 +1690,8 @@ h3{font-size:16px;font-weight:600;margin:24px 0 10px;color:#1e293b}
 .main-list .ob-list-content{width:100%}
 .main-list .ob-list-content>.card{max-width:none}
 table{width:100%;border-collapse:collapse;font-size:14px}
-th{text-align:left;padding:10px 12px;border-bottom:2px solid #e2e8f0;color:#64748b;font-weight:600}
-th a{color:#64748b;text-decoration:none}
+th{text-align:left;padding:10px 12px;border-bottom:2px solid #cbd5e1;color:#334155;font-weight:600;background:#eef2f7}
+th a{color:inherit;text-decoration:none}
 th a:hover{color:#1e293b}
 td{padding:10px 12px;border-bottom:1px solid #f1f5f9;color:#334155;font-size:14px}
 tr:last-child td{border-bottom:none}
@@ -1627,7 +1727,7 @@ details[open] summary::before{content:"▼ "}
 .filter-body input,.filter-body select{padding:7px 10px;font-size:13px}
 .filter-actions{padding:0 20px 16px;display:flex;gap:10px}
 .tp-table{width:100%;border-collapse:collapse;font-size:13px;margin-bottom:8px;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden}
-.tp-table th{background:#f8fafc;padding:8px 10px;text-align:left;font-size:12px;color:#475569;font-weight:600;border-bottom:2px solid #e2e8f0;white-space:nowrap}
+.tp-table th{background:#eef2f7;padding:8px 10px;text-align:left;font-size:12px;color:#334155;font-weight:600;border-bottom:2px solid #cbd5e1;white-space:nowrap}
 .tp-table td{padding:5px 6px;border-bottom:1px solid #e2e8f0;border-right:1px solid #eef2f7;vertical-align:middle}
 .tp-table tbody tr:nth-child(even) td{background:#f1f5f9}
 .tp-table tbody tr:hover td{background:#eef4ff}
@@ -1690,6 +1790,15 @@ body{padding-bottom:32px}
      обработки) остаются обычными: текст переносится, ширина не схлопывается. */
   main table.tbl-plain{display:table;white-space:normal;overflow:visible}
 }
+/* Embedded applications and the tab workspace own their scrolling, including
+   on narrow screens. Ordinary forms retain the mobile document layout. */
+body:has(.ob-shell-main),body:has(.ob-page-application){height:100dvh;min-height:0;overflow:hidden}
+body:has(.ob-shell-main) .app-body,body:has(.ob-page-application) .app-body{display:flex;flex:1;min-height:0;overflow:hidden}
+body:has(.ob-shell-main) .subsys-bar,body:has(.ob-page-application) .subsys-bar{overflow-x:auto;max-width:100%}
+@media(max-width:820px){
+  body:has(.ob-shell-main) .topbar,body:has(.ob-page-application) .topbar{height:auto;min-height:38px;flex-wrap:wrap}
+  body:has(.ob-shell-main) .topbar-title,body:has(.ob-page-application) .topbar-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+}
 /* ===== Плиточный режим списка (Фаза 1a) ===== */
 .view-switch{display:inline-flex;border:1px solid #e2e8f0;border-radius:7px;overflow:hidden;flex-shrink:0}
 .view-switch .view-btn{padding:6px 11px;color:#64748b;text-decoration:none;font:inherit;font-size:15px;line-height:1;background:#fff;border:0;border-right:1px solid #e2e8f0;cursor:pointer}
@@ -1726,6 +1835,24 @@ body{padding-bottom:32px}
 .search-hit-posted{color:#16a34a;font-weight:600}
 /* Поле-картинка на форме */
 .img-field{display:flex;flex-direction:column;gap:8px;align-items:flex-start}
+.img-preview [data-ob-image-view]{display:block;border:0;padding:0;background:transparent;cursor:zoom-in;border-radius:8px}
+.img-preview [data-ob-image-view]:focus-visible{outline:3px solid #2563eb;outline-offset:3px}
+.ob-image-viewer{margin:auto;width:96vw;height:92vh;max-width:96vw;max-height:92vh;padding:12px;border:1px solid #475569;border-radius:12px;background:#0f172a;color:#f8fafc;overflow:hidden}
+.ob-image-viewer[open]{display:flex;flex-direction:column;gap:10px}
+.ob-image-viewer::backdrop{background:rgba(0,0,0,.72)}
+.ob-image-viewer header,.ob-image-viewer nav{display:flex;align-items:center;gap:8px;flex-wrap:wrap;flex-shrink:0}
+.ob-image-viewer h2{color:#f8fafc;flex:1;font-size:16px;overflow-wrap:anywhere}
+.ob-image-viewer button,.ob-image-viewer a{border:1px solid #64748b;border-radius:6px;padding:6px 10px;background:#1e293b;color:#f8fafc;font:inherit;text-decoration:none;cursor:pointer}
+.ob-image-viewer button:disabled{opacity:.4;cursor:default}
+.ob-image-viewer :focus-visible{outline:3px solid #60a5fa;outline-offset:2px}
+.ob-image-viewport{flex:1;min-height:0;overflow:auto;touch-action:none;overscroll-behavior:contain;background:#020617}
+.ob-image-canvas{display:grid;place-items:center;min-width:100%;min-height:100%}
+.ob-image-canvas img[hidden]{display:none}
+.ob-image-canvas img{display:block;max-width:none;max-height:none;user-select:none;touch-action:none}
+.ob-image-viewport[data-loaded="1"]{cursor:grab}
+.ob-image-viewport[data-dragging="1"]{cursor:grabbing}
+.ob-image-status{min-height:1.4em;font-size:13px}
+@media(prefers-reduced-motion:reduce){.ob-image-viewer *{scroll-behavior:auto}}
 .img-preview img{max-width:240px;max-height:240px;border-radius:8px;border:1px solid #e2e8f0;display:block;background:#f8fafc}
 .img-actions{display:flex;gap:8px;align-items:center}
 .img-field label.btn{cursor:pointer;margin:0}
@@ -1742,7 +1869,7 @@ const tplNav = `
   <form class="topbar-search" method="get" action="/ui/search" role="search">
     <input type="search" name="q" value="{{.SearchQuery}}" placeholder="{{t $.Lang "Поиск по базе"}}" aria-label="{{t $.Lang "Поиск по базе"}}">
   </form>
-  <form method="post" action="/ui/form-mode" style="display:inline;margin:0">
+  {{if not .FormOpenModeLocked}}<form method="post" action="/ui/form-mode" style="display:inline;margin:0">
     {{if eq (printf "%v" .FormOpenMode) "tabs"}}
       <input type="hidden" name="mode" value="pages">
       <button type="submit" class="sys-btn" title="{{t $.Lang "Открывать формы отдельными страницами"}}">&#9645; {{t $.Lang "Страницы"}}</button>
@@ -1750,7 +1877,7 @@ const tplNav = `
       <input type="hidden" name="mode" value="tabs">
       <button type="submit" class="sys-btn" title="{{t $.Lang "Открывать формы во вкладках"}}">&#10697; {{t $.Lang "Вкладки"}}</button>
     {{end}}
-  </form>
+  </form>{{end}}
   <div class="sys-menu">
     <button class="sys-btn" type="button" data-ob-toggle-target="sysd">&#9881; {{t $.Lang "Система"}} &#9660;</button>
     <div class="sys-drop" id="sysd">
@@ -1760,7 +1887,7 @@ const tplNav = `
       <details class="sys-group">
         <summary>{{t $.Lang "Профиль и интерфейс"}}</summary>
         <div class="sys-group-body">
-          <div class="sys-mode-block">
+          {{if not .FormOpenModeLocked}}<div class="sys-mode-block">
             <div class="sys-mode-title">{{t $.Lang "Режим открытия форм"}}</div>
             <form method="post" action="/ui/form-mode" style="margin:0;padding:0">
               <label><input type="radio" name="mode" value="pages" {{if eq (printf "%v" .FormOpenModePersonal) "pages"}}checked{{end}}> {{t $.Lang "Отдельные страницы"}}</label>
@@ -1768,7 +1895,7 @@ const tplNav = `
               <label><input type="radio" name="mode" value="default" {{if eq (printf "%v" .FormOpenModePersonal) ""}}checked{{end}}> {{t $.Lang "По умолчанию (глобально)"}}</label>
               <button type="submit" class="sys-btn">{{t $.Lang "Применить"}}</button>
             </form>
-          </div>
+          </div>{{end}}
           {{if .HasAuth}}{{if not .DenyPasswdChange}}<a href="/ui/profile/passwd">{{t $.Lang "Сменить пароль"}}</a>{{end}}
           <a href="/ui/profile/2fa">{{t $.Lang "Второй фактор"}}</a>{{end}}
           {{if .HasPersonalNavigation}}<a href="/ui/settings/navigation?subsystem={{.CurrentSubsystem}}">{{t $.Lang "Настроить меню"}}</a>{{end}}
@@ -1914,7 +2041,7 @@ a.w-kpi-link{display:block;text-decoration:none;color:#0f172a}
 a.w-kpi-link:hover{color:#1a4a80;text-decoration:underline}
 .w-list{overflow-x:auto}
 .w-list table{margin-top:4px;font-size:13px}
-.w-list th{padding:6px 8px;font-size:11px;color:#64748b;border-bottom:1px solid #e2e8f0;text-align:left;background:transparent}
+.w-list th{padding:6px 8px;font-size:11px;color:#334155;font-weight:600;border-bottom:2px solid #cbd5e1;text-align:left;background:#eef2f7}
 .w-list td{padding:6px 8px;border-bottom:1px solid #f1f5f9;font-size:13px;color:#334155}
 .w-list td.right{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
 .w-list tr:last-child td{border-bottom:none}
@@ -2133,6 +2260,7 @@ const tplList = `
     {{/* На свежем списке строка не выбрана — кнопка приходит с сервера уже
          приглушённой, дальше её состояние ведёт ui.js по выделению. */}}
     <button type="button" id="list-actions-btn" class="btn btn-secondary" data-ob-list-actions aria-disabled="true" title="{{t $.Lang "Сначала выберите строку списка"}}">⚙ {{t $.Lang "Действия"}} ▾</button>
+    {{range .ProcessorLinks}}<a class="btn btn-secondary" href="{{.URL}}">{{.Title}}</a>{{end}}
     <a class="btn btn-sm" href="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}/excel{{listExcelSuffix .Params .ListFormOff}}" style="background:#16a34a;color:#fff" title="{{t $.Lang "Скачать Excel"}}">{{t $.Lang "Excel ↓"}}</a>
   </div>
 </div>
@@ -2150,6 +2278,7 @@ const tplList = `
   {{range .Breadcrumbs}}<span>›</span><a href="{{listURL $.Query "parent" .ID}}">{{.Label}}</a>{{end}}
 </nav>
 {{end}}
+{{if .SearchAll}}<p class="list-search-scope" style="margin:6px 0 10px;color:#64748b;font-size:13px">{{t $.Lang "Результаты поиска по всему справочнику"}}</p>{{end}}
 
 {{$entity := .Entity}}{{$params := .Params}}{{$refOpts := .RefFilterOptions}}
 <details{{if hasFilter $params}} open{{end}}>
@@ -2175,7 +2304,7 @@ const tplList = `
           <select id="flt-{{.Name}}" name="f.{{.Name}}" data-ref-entity="{{.RefEntity}}" style="flex:1;min-width:0">
             <option value="">{{t $.Lang "— все —"}}</option>
             {{range index $refOpts .Name}}
-            <option value="{{index . "id"}}" {{if eq (index . "id") (filterVal $params $f.Name).Value}}selected{{end}}>{{index . "_label"}}</option>
+            <option value="{{index . "id"}}"{{refOptionStyle .}} {{if eq (index . "id") (filterVal $params $f.Name).Value}}selected{{end}}>{{index . "_label"}}</option>
             {{end}}
           </select>
           <button type="button" data-ob-ref-picker="flt-{{$f.Name}}" style="padding:7px 10px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px;flex-shrink:0" title="{{t $.Lang "Выбрать из списка"}}">...</button>
@@ -2350,6 +2479,7 @@ const tplList = `
     </a>
   </th>
   {{end}}
+  {{if $.SearchAll}}<th>{{t $.Lang "Группа"}}</th>{{end}}
   <th style="width:90px"></th>
 </tr></thead><tbody id="list-body"
   data-ob-row-base="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}"
@@ -2382,6 +2512,7 @@ const tplList = `
     {{else if isEnum (str .Type)}}<td style="white-space:nowrap">{{enumLabel $.EnumLabels .Name (str (index $row .Name))}}</td>
     {{else}}<td style="white-space:nowrap">{{if and (eq .Name "Наименование") $.Entity.Hierarchical}}{{if $isFolder}}📁 {{else}}📄 {{end}}{{end}}{{fmtCell (index $row .Name)}}{{if and (eq .Name "Наименование") (index $row "_is_predefined")}} <span title="{{t $.Lang "Предопределённый элемент"}}" style="color:#f59e0b;font-size:11px">★</span>{{end}}</td>{{end}}
   {{end}}
+  {{if $.SearchAll}}<td style="white-space:nowrap" data-ob-list-group>{{with index $row "_group_id"}}<a href="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}?parent={{.}}{{if $.CurrentSubsystem}}&subsystem={{$.CurrentSubsystem}}{{end}}">📁 {{index $row "_group_label"}}</a>{{else}}<span style="color:#94a3b8">{{t $.Lang "Корень"}}</span>{{end}}</td>{{end}}
   <td>
     {{if and $isFolder $.Entity.Hierarchical}}
       <a class="btn btn-sm btn-secondary" href="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}{{listURL $.Query "parent" (str (index $row "id"))}}">{{t $.Lang "▶ Войти"}}</a>
@@ -2579,7 +2710,7 @@ const tplForm = `
 {{end}}{{/* end if not .IsPopup */}}
 
 <div class="card">
-<form id="main-form" method="POST" data-ob-dirty-watch="1"{{if enterSubmitsForm (index . "Form")}} data-ob-enter-submits="1"{{end}}>
+<form id="main-form" method="POST" autocomplete="off" data-ob-dirty-watch="1"{{if enterSubmitsForm (index . "Form")}} data-ob-enter-submits="1"{{end}}>
 {{if and (not .IsNew) (index .Values "_version")}}<input type="hidden" name="_version" value="{{index .Values "_version"}}">{{end}}
 {{if .IsPopup}}<input type="hidden" name="_popup" value="1">{{end}}
 {{if .Entity.Hierarchical}}
@@ -2595,7 +2726,7 @@ const tplForm = `
   <select name="parent_id">
     <option value="">{{t $.Lang "— корень —"}}</option>
     {{range .FolderOptions}}
-    <option value="{{index . "id"}}" {{if eq (index . "id") (index $.Values "parent_id")}}selected{{end}}>{{index . "_label"}}</option>
+    <option value="{{index . "id"}}"{{refOptionStyle .}} {{if eq (index . "id") (index $.Values "parent_id")}}selected{{end}}>{{index . "_label"}}</option>
     {{end}}
   </select>
 </div>
@@ -2614,7 +2745,7 @@ const tplForm = `
       <select id="ref-{{$fn}}"{{if not $ro}} name="{{$fn}}"{{end}} style="flex:1" data-ref-entity="{{.RefEntity}}"{{if $.RefFilter}}{{with index $.RefFilter $fn}} data-ref-filter="{{.}}"{{end}}{{end}}{{if and (not $ro) (.InlineCreateEnabled false) (refWriteAllowed $.RefWriteAccess .RefEntity)}} data-ref-allow-create="1"{{end}}{{if $ro}} disabled{{end}}>
         <option value="">{{t $.Lang "— выбрать —"}}</option>
         {{range index $.RefOptions $fn}}
-        <option value="{{index . "id"}}" {{if eq (index . "id") (index $.Values $fn)}}selected{{end}}>{{index . "_label"}}</option>
+        <option value="{{index . "id"}}"{{refOptionStyle .}} {{if eq (index . "id") (index $.Values $fn)}}selected{{end}}>{{index . "_label"}}</option>
         {{end}}
       </select>
       {{if not $ro}}<button type="button" data-ob-ref-picker="ref-{{$fn}}" style="padding:8px 12px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px;white-space:nowrap;flex-shrink:0" title="{{t $.Lang "Выбрать из списка"}}">...</button>{{end}}
@@ -2653,10 +2784,10 @@ const tplForm = `
     {{/* Поле-картинка: скрытый input хранит ссылку (UUID), превью + загрузка/очистка.
          Без JS остаётся скрытый input — значение не теряется при записи. */}}
     {{$iv := index $.Values $fn}}
-    <div class="img-field">
+    <div class="img-field" data-ob-image-field="{{$fn}}" data-ob-image-label="{{$flabel}}">
       <input type="hidden" name="{{$fn}}" value="{{$iv}}">
-      <div class="img-preview"{{if not $iv}} style="display:none"{{end}}><img src="{{if $iv}}/ui/_image/{{$iv}}{{end}}" alt=""></div>
-      {{if not $ro}}
+      <div class="img-preview"{{if not $iv}} style="display:none"{{end}}><button type="button"{{if not (isImageRef $iv)}} disabled{{end}} data-ob-image-view data-ob-readonly-navigation="1" data-ob-image-ref="{{$iv}}" aria-label="{{$flabel}}"><img src="{{if $iv}}/ui/_image/{{$iv}}{{end}}" alt="{{$flabel}}"></button></div>
+      {{if and (not $ro) $.CanWrite}}
       <div class="img-actions">
         <label class="btn btn-sm btn-secondary">{{t $.Lang "Загрузить…"}}<input type="file" accept="image/*" style="display:none" data-ob-image-upload="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/_image"></label>
         <button type="button" class="btn btn-sm img-clear-btn" data-ob-image-clear{{if not $iv}} style="display:none"{{end}}>{{t $.Lang "Очистить"}}</button>
@@ -2688,7 +2819,7 @@ const tplForm = `
             <select name="tp.{{$tpName}}.{{$i}}.{{$fn}}" style="flex:1" data-ref-entity="{{.RefEntity}}"{{if $.RefFilter}}{{with index $.RefFilter (printf "%s.%s" $tpName $fn)}} data-ref-filter="{{.}}"{{end}}{{end}}{{if and (.InlineCreateEnabled true) (refWriteAllowed $.RefWriteAccess .RefEntity)}} data-ref-allow-create="1"{{end}}{{if $tpReadOnly}} disabled{{end}}>
               <option value="">{{t $.Lang "— выбрать —"}}</option>
               {{range index $tpRef $fn}}
-              <option value="{{index . "id"}}" {{if eq (str (index . "id")) (refID (index $row $fn))}}selected{{end}}>{{index . "_label"}}</option>
+              <option value="{{index . "id"}}"{{refOptionStyle .}} {{if eq (str (index . "id")) (refID (index $row $fn))}}selected{{end}}>{{index . "_label"}}</option>
               {{end}}
             </select>
             <button type="button" data-ob-ref-picker-self style="padding:4px 8px;border:1px solid #e2e8f0;border-radius:5px;background:#f8fafc;cursor:pointer;font-size:12px;flex-shrink:0" title="{{t $.Lang "Выбрать из списка"}}"{{if $tpReadOnly}} disabled{{end}}>...</button>
@@ -2712,7 +2843,7 @@ const tplForm = `
         {{else if eq (str .Type) "date"}}
           {{/* Поле даты, а не текст: в текстовом поле стояла сырая метка
                «2026-10-19T09:15:30». */}}
-          {{if $tpReadOnly}}<input type="text" name="tp.{{$tpName}}.{{$i}}.{{$fn}}" value="{{fmtDate (index $row $fn)}}" disabled data-ob-date-text>{{else}}<input type="datetime-local" step="1" name="tp.{{$tpName}}.{{$i}}.{{$fn}}" value="{{tpDateInput (index $row $fn)}}"
+          {{if $tpReadOnly}}<input type="text" autocomplete="off" name="tp.{{$tpName}}.{{$i}}.{{$fn}}" value="{{fmtDate (index $row $fn)}}" disabled data-ob-date-text>{{else}}<input type="datetime-local" step="1" name="tp.{{$tpName}}.{{$i}}.{{$fn}}" value="{{tpDateInput (index $row $fn)}}"
             data-ob-tp-recalc>{{end}}
         {{else if eq (str .Type) "bool"}}
           {{/* Флажок, а не текст (#1010): в текстовом поле стояло сырое
@@ -2720,7 +2851,7 @@ const tplForm = `
                истиной только «true» — пересохранение формы снимало флажок. */}}
           <input type="checkbox" name="tp.{{$tpName}}.{{$i}}.{{$fn}}" value="true"{{if checked (index $row $fn)}} checked{{end}}{{if $tpReadOnly}} disabled{{end}}>
         {{else}}
-          <input type="text" name="tp.{{$tpName}}.{{$i}}.{{$fn}}" value="{{index $row $fn}}"
+          <input type="text" autocomplete="off" name="tp.{{$tpName}}.{{$i}}.{{$fn}}" value="{{index $row $fn}}"
             data-ob-tp-recalc{{if $tpReadOnly}} disabled{{end}}>
         {{end}}
         </td>
@@ -2954,7 +3085,7 @@ const tplReport = `
           <select name="{{$pname}}" id="rp-{{$pname}}" style="flex:1;min-width:0" data-ref-entity="{{$p.RefEntity}}">
             <option value="">{{t $.Lang "— все —"}}</option>
             {{range $p.Opts}}
-              <option value="{{index . "id"}}" {{if eq $pval (str (index . "id"))}}selected{{end}}>{{index . "_label"}}</option>
+              <option value="{{index . "id"}}"{{refOptionStyle .}} {{if eq $pval (str (index . "id"))}}selected{{end}}>{{index . "_label"}}</option>
             {{end}}
           </select>
           <button type="button" data-ob-ref-picker="rp-{{$pname}}" style="padding:6px 10px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px;flex-shrink:0" title="{{t $.Lang "Выбрать из списка"}}">...</button>
@@ -3119,7 +3250,7 @@ const tplRegister = `
     <div style="display:flex;gap:4px;align-items:center">
       <select id="regflt-{{.Name}}" name="flt_{{.Name}}" data-ref-entity="{{.RefEntity}}" style="padding:6px 10px;border:1px solid #e2e8f0;border-radius:6px;font-size:13px;min-width:0">
         <option value="">— {{t $.Lang "все"}} —</option>
-        {{$cur := index $flt .Name}}{{range index $refOpts .Name}}<option value="{{index . "id"}}" {{if eq (str (index . "id")) $cur}}selected{{end}}>{{index . "_label"}}</option>{{end}}
+        {{$cur := index $flt .Name}}{{range index $refOpts .Name}}<option value="{{index . "id"}}"{{refOptionStyle .}} {{if eq (str (index . "id")) $cur}}selected{{end}}>{{index . "_label"}}</option>{{end}}
       </select>
       <button type="button" data-ob-ref-picker="regflt-{{.Name}}" style="padding:6px 9px;border:1px solid #e2e8f0;border-radius:6px;background:#f8fafc;cursor:pointer;font-size:12px;flex-shrink:0" title="{{t $.Lang "Выбрать из списка"}}">...</button>
     </div>
@@ -3298,7 +3429,7 @@ const tplProcessor = `
         <div style="display:flex;gap:6px;align-items:center">
           <select id="pp-{{$pname}}" name="{{$pname}}" style="flex:1" data-ref-entity="{{index $.ProcessorRefEntity $pname}}" {{if .Required}}required{{end}}>
             <option value="">{{t $.Lang "— выбрать —"}}</option>
-            {{with index $.RefOptions $pname}}{{range .}}<option value="{{index . "id"}}" {{if eq (index . "id") (index $.ParamValues $pname)}}selected{{end}}>{{index . "_label"}}</option>{{end}}{{end}}
+            {{with index $.RefOptions $pname}}{{range .}}<option value="{{index . "id"}}"{{refOptionStyle .}} {{if eq (index . "id") (index $.ParamValues $pname)}}selected{{end}}>{{index . "_label"}}</option>{{end}}{{end}}
           </select>
           <button type="button" data-ob-ref-picker="pp-{{$pname}}" style="padding:6px 10px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px;flex-shrink:0" title="{{t $.Lang "Выбрать из списка"}}">...</button>
           <button type="button" data-ob-ref-current="pp-{{$pname}}" style="padding:6px 9px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px;flex-shrink:0" title="{{t $.Lang "Открыть карточку"}}">🔍</button>
@@ -3553,6 +3684,10 @@ const tplAbout = `
         {{with .UpdateAvailable}}<div style="margin-top:6px;font-weight:400;font-size:13px;color:#166534">{{t $.Lang "Доступна новая версия платформы"}}: {{.}} <span style="color:#94a3b8">— {{t $.Lang "обновление выполняется из лаунчера"}}</span></div>{{end}}
       </td>
     </tr>
+    {{with .Distribution}}{{if .Present}}
+    <tr><td style="padding:14px 0;color:#64748b;font-size:14px">{{t $.Lang "Изменённая сборка"}}</td><td style="padding:14px 0;font-size:14px">{{.Name}} {{.Version}}</td></tr>
+    {{if .Supplier}}<tr><td style="padding:14px 0;color:#64748b;font-size:14px">{{t $.Lang "Поставщик сборки"}}</td><td style="padding:14px 0;font-size:14px">{{.Supplier}}</td></tr>{{end}}
+    {{end}}{{end}}
     {{if .Cfg.PlatAuthor}}
     <tr>
       <td style="padding:14px 0;border-bottom:1px solid #f1f5f9;color:#64748b;font-size:14px">{{t $.Lang "Правообладатель платформы"}}</td>
@@ -3705,7 +3840,7 @@ const tplInfoReg = `
     <div style="display:flex;gap:4px;align-items:center">
       <select name="{{$dn}}" id="ird-{{$dn}}" style="flex:1;min-width:0" data-ref-entity="{{.RefEntity}}">
         <option value="">{{t $.Lang "— выбрать —"}}</option>
-        {{range index $.RefOpts $dn}}<option value="{{index . "id"}}" {{if eq (index $.Values $dn) (index . "id")}}selected{{end}}>{{index . "_label"}}</option>{{end}}
+        {{range index $.RefOpts $dn}}<option value="{{index . "id"}}"{{refOptionStyle .}} {{if eq (index $.Values $dn) (index . "id")}}selected{{end}}>{{index . "_label"}}</option>{{end}}
       </select>
       <button type="button" data-ob-ref-picker="ird-{{$dn}}" style="padding:6px 10px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px;flex-shrink:0" title="{{t $.Lang "Выбрать из списка"}}">...</button>
       <button type="button" data-ob-ref-current="ird-{{$dn}}" style="padding:6px 9px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px;flex-shrink:0" title="{{t $.Lang "Открыть карточку"}}">🔍</button>
@@ -3758,7 +3893,7 @@ const tplConstants = `
       <select id="const-{{.Name}}" name="{{.Name}}" data-ref-entity="{{.RefEntity}}" style="flex:1;min-width:0"{{if .Required}} required{{end}}>
         <option value="">{{t $.Lang "— не выбрано —"}}</option>
         {{range index $.RefOpts .Name}}
-        <option value="{{index . "id"}}" {{if eq (index . "id") (index $.Values $c.Name)}}selected{{end}}>{{index . "_label"}}</option>
+        <option value="{{index . "id"}}"{{refOptionStyle .}} {{if eq (index . "id") (index $.Values $c.Name)}}selected{{end}}>{{index . "_label"}}</option>
         {{end}}
       </select>
       <button type="button" data-ob-ref-picker="const-{{$c.Name}}" style="padding:8px 12px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px;flex-shrink:0" title="{{t $.Lang "Выбрать из списка"}}">...</button>
@@ -3833,7 +3968,7 @@ const tplJournal = `
         <select id="jflt-{{$f}}" name="f.{{$f}}" data-ref-entity="{{index $.FilterRefEntities $f}}" style="flex:1;min-width:0">
           <option value="">{{t $.Lang "— все —"}}</option>
           {{range index $.FilterOptions $f}}
-          <option value="{{index . "id"}}" {{if eq (index . "id") (filterVal $params $f).Value}}selected{{end}}>{{index . "_label"}}</option>
+          <option value="{{index . "id"}}"{{refOptionStyle .}} {{if eq (index . "id") (filterVal $params $f).Value}}selected{{end}}>{{index . "_label"}}</option>
           {{end}}
         </select>
         <button type="button" data-ob-ref-picker="jflt-{{$f}}" style="padding:7px 10px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px;flex-shrink:0" title="{{t $.Lang "Выбрать из списка"}}">...</button>
@@ -4432,11 +4567,16 @@ const tplAccountReg = `
 const tplPageCustom = `
 {{define "page-custom"}}
 {{template "head" .}}{{template "nav" .}}
-<main class="main-list">
-  <h2>{{.PageTitle}}</h2>
+{{if .PageApplication}}<style>
+main.ob-page-application{display:flex;flex-direction:column;padding:0;overflow:hidden;min-height:0}
+.ob-page-application .ob-service-frame{flex:1;height:100%;min-height:0}
+</style>{{end}}
+<main class="main-list{{if .PageApplication}} ob-page-application{{end}}">
+  {{if not .PageApplication}}<h2>{{.PageTitle}}</h2>{{end}}
   {{if .PageError}}<div class="error">{{.PageError}}</div>{{end}}
   {{range $i, $b := .PageBlocks}}
-    {{if eq $b.Kind "heading"}}<h3>{{$b.Text}}</h3>
+    {{if eq $b.Kind "application"}}<iframe class="ob-service-frame" src="{{$b.URL}}" title="{{if $b.Title}}{{$b.Title}}{{else}}{{$.PageTitle}}{{end}}" style="display:block;width:100%;border:0;{{if not $.PageApplication}}height:70vh;{{end}}"></iframe>
+    {{else if eq $b.Kind "heading"}}<h3>{{$b.Text}}</h3>
     {{else if eq $b.Kind "paragraph"}}<p style="margin-bottom:14px;color:#334155;font-size:14px;line-height:1.55;max-width:900px">{{$b.Text}}</p>
     {{else if eq $b.Kind "kpi"}}<div class="card" style="display:inline-block;min-width:200px;margin:0 12px 14px 0;padding:16px 20px;vertical-align:top">{{if $b.Label}}<div style="font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:#64748b;font-weight:600;margin-bottom:6px">{{$b.Label}}</div>{{end}}<div style="font-size:28px;font-weight:700;color:#0f172a;line-height:1.1">{{$b.Value}}</div></div>
     {{else if eq $b.Kind "button"}}{{if $b.Action}}<form method="post" action="{{$.PageActionBase}}{{$b.Action}}{{$.PageQuery}}" style="display:inline-block;margin:0 8px 14px 0"><button type="submit" class="btn btn-primary">{{$b.Text}}</button></form>{{else}}<a href="{{$b.URL}}" class="btn btn-primary" style="margin:0 8px 14px 0">{{$b.Text}}</a>{{end}}
@@ -4476,6 +4616,19 @@ const tplPageCustom = `
 </body></html>
 {{end}}
 `
+
+// inputAutocomplete — значение autocomplete текстового поля управляемой формы:
+// всегда "off" (#595), и у поля с маской ввода тоже. Chrome ведёт историю ввода
+// по имени поля и не ведёт её только при "off". На "one-time-code" (так было
+// с #1871) он запоминал каждый введённый телефон и подсказывал его в любом
+// поле с тем же именем, у другого клиента. Проверено на Chromium 109:
+// autocomplete_history_manager.cc не запрашивает подсказки, если
+// should_autocomplete ложно, а ложно оно только при "off". Яндекс Браузер на
+// "off" не смотрит и предлагает телефоны из своего профиля, поэтому ему ui.js
+// отдаёт поле с маской как "one-time-code" (obGuardAutocomplete).
+func inputAutocomplete(el *metadata.FormElement) string {
+	return "off"
+}
 
 // funcsListQuerySuffix — состояние списка (активность, поиск, отбор) строкой
 // запроса для ссылок выгрузки.

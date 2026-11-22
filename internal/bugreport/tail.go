@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/ivantit66/onebase/internal/userdata"
 )
 
 // StartupLogLines — сколько строк стартового следа кладём в отчёт. Файл
@@ -58,9 +60,9 @@ func TailFile(path string, lines int, maxBytes int64) string {
 // StartupLogPath — путь к следу запусков, который пишет cmd/onebase/main.go.
 // Пустая строка — домашний каталог недоступен.
 func StartupLogPath() string {
-	home, err := os.UserHomeDir()
+	dir, err := userdata.Path()
 	if err != nil {
 		return ""
 	}
-	return filepath.Join(home, ".onebase", "startup.log")
+	return filepath.Join(dir, "startup.log")
 }

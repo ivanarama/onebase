@@ -35,6 +35,22 @@ import (
 // исполняются оба.
 func ForEachDialect(t *testing.T, body func(t *testing.T, db *storage.DB)) {
 	t.Helper()
+	forEachDialect(t, false, body)
+}
+
+// ForEachDialectWithoutUUIDTextCast executes the same matrix in a PostgreSQL
+// database without the global implicit uuid-to-text compatibility cast. With
+// the CI superuser it creates a private database from template0 and a temporary
+// ordinary login, then removes both after the matrix. An ordinary login can use
+// an existing database without that cast. Setup errors fail rather than skip
+// the SQL scenarios; TEST_DATABASE_URL being absent is the only PostgreSQL skip.
+func ForEachDialectWithoutUUIDTextCast(t *testing.T, body func(t *testing.T, db *storage.DB)) {
+	t.Helper()
+	forEachDialect(t, true, body)
+}
+
+func forEachDialect(t *testing.T, withoutUUIDTextCast bool, body func(t *testing.T, db *storage.DB)) {
+	t.Helper()
 
 	t.Run("sqlite", func(t *testing.T) {
 		db, err := storage.ConnectSQLite(context.Background(), filepath.Join(t.TempDir(), "matrix.db"))
@@ -52,6 +68,9 @@ func ForEachDialect(t *testing.T, body func(t *testing.T, db *storage.DB)) {
 			t.Skip("TEST_DATABASE_URL not set")
 		}
 		ctx := context.Background()
+		if withoutUUIDTextCast {
+			dsn = strictPostgresDSN(t, ctx, dsn)
+		}
 		schema := storage.NewEphemeralSchemaName()
 		db, err := storage.ConnectWithSchema(ctx, dsn, schema)
 		if err != nil {

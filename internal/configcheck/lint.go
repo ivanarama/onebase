@@ -413,11 +413,11 @@ func entityYAMLSchema() *yamlLintSchema {
 		"deadline_days": freeMap(),
 	})
 	return with(obj(
-		"name", "title", "description", "posting", "hierarchical", "hierarchy_kind",
+		"name", "title", "description", "posting", "post_caption", "post_and_close_hidden", "hierarchical", "hierarchy_kind",
 		// owner — справочник-владелец (подчинённый справочник, 1С «Владелец»).
 		"owner",
 		"presentation", "order_by", "choice_preview", "choice_preview_proc",
-		"list_form", "item_form", "based_on", "list_mode", "notify_changes", "list_refresh_on",
+		"list_form", "item_form", "based_on", "list_mode", "list_filters", "interactive_create", "notify_changes", "list_refresh_on",
 		"fulltext", "search_fields", "detail_panel",
 	), map[string]*yamlLintSchema{
 		"titles": freeMap(),
@@ -432,9 +432,13 @@ func entityYAMLSchema() *yamlLintSchema {
 		"numerator": with(obj("prefix", "length", "period", "scope", "base_prefix", "unique"), map[string]*yamlLintSchema{
 			"field": with(obj("title", "label", "required", "default", "pii"), map[string]*yamlLintSchema{"titles": freeMap()}),
 		}),
-		"predefined":   seq(with(obj("name"), map[string]*yamlLintSchema{"fields": freeMap()})),
-		"tile_view":    obj("image", "title", "subtitle", "fields"),
-		"activity":     obj("field", "default_scope", "hide_from_choice"),
+		"predefined": seq(with(obj("name"), map[string]*yamlLintSchema{"fields": freeMap()})),
+		"tile_view":  obj("image", "title", "subtitle", "fields"),
+		"activity":   obj("field", "default_scope", "hide_from_choice"),
+		"choice_row_style": with(obj("for_roles"), map[string]*yamlLintSchema{
+			"for_user": obj("func", "card", "account_field", "field", "equals"),
+			"rules":    seq(obj("when", "color", "background", "bold", "italic")),
+		}),
 		"detail_panel": detailPanel,
 		"stages":       stages,
 	})
@@ -619,7 +623,7 @@ func accountRegisterYAMLSchema() *yamlLintSchema {
 
 func homePageYAMLSchema() *yamlLintSchema {
 	nav := obj("documents", "catalogs", "reports", "inforegs", "registers", "processors", "journals", "pages")
-	return with(obj("title", "layout", "hidden"), map[string]*yamlLintSchema{
+	return with(obj("title", "layout", "hidden", "messages", "message_seconds"), map[string]*yamlLintSchema{
 		"titles":      freeMap(),
 		"rows":        seq(obj("widgets")),
 		"widgets":     seq(obj("name", "span")),
@@ -645,7 +649,11 @@ func formModuleYAMLSchema() *yamlLintSchema {
 		// неизвестными, а гейт CI считает предупреждение ошибкой — то есть
 		// документированный «language» у kind: ПолеКода не давал примеру
 		// пройти собственную проверку (#1014).
-		"orientation", "background", "input_mask", "language", "virtual_columns",
+		"orientation", "equal_columns", "background", "label_color", "text_bold", "input_mask", "language", "virtual_columns",
+		"deadline_warn",
+		"conceal", "reveal_when",
+		"title_from",
+		"hint_inline",
 	} {
 		element.keys[k] = nil
 	}
@@ -665,7 +673,7 @@ func formModuleYAMLSchema() *yamlLintSchema {
 	element.keys["children"] = seq(element)
 	element.keys["choices"] = seq(with(obj("value"), map[string]*yamlLintSchema{"title": freeMap()}))
 	element.keys["options"] = seq(with(obj("value"), map[string]*yamlLintSchema{"label": freeMap()}))
-	element.keys["choice_filter"] = seq(obj("field", "op", "from", "value", "ref"))
+	element.keys["choice_filter"] = seq(with(obj("field", "op", "from", "value", "ref", "query"), map[string]*yamlLintSchema{"params": freeMap()}))
 
 	attrColumn := with(obj("id", "original_id", "name", "type", "length", "precision"), map[string]*yamlLintSchema{
 		"title": freeMap(),
@@ -712,6 +720,10 @@ func formModuleYAMLSchema() *yamlLintSchema {
 		// ok.post — «ОК» проводит документ, как в 1С.
 		"ok":    obj("visible", "post"),
 		"close": action,
+		// copy.visible:false убирает «Скопировать» у документа, который не
+		// копируют по смыслу (звонок, заявка — свидетельство конкретного
+		// обращения, #2241). Право создания и адрес ?copy= не меняются.
+		"copy": action,
 		// attachments.visible:false скрывает панель вложений выбранной
 		// managed-формы (план 181C, #1621); attachment endpoint не меняется.
 		"attachments": action,
@@ -1799,20 +1811,18 @@ func CheckLintRoles(dir string, proj *project.Project, roles []*auth.Role) []Iss
 		switch auth.ProcessorPermissionMode(role.Permissions) {
 		case auth.ProcessorModeMap:
 			mark(coveredProcessors, role.Permissions.Processors)
-		case auth.ProcessorModeImplicitAllowAll:
-			// Переходный срез A плана 162: отсутствие секции пока разрешает все
-			// обработки. Доступ не меняем, но делаем его видимым по каждой роли.
-			processorsOpen = true
+		case auth.ProcessorModeImplicitDeny:
+			// Пустое умолчание не покрывает ни одну обработку.
 			processorRoleWarnings = append(processorRoleWarnings, roleProcessorWarning(role,
-				"rbac.processors-implicit-allow",
-				fmt.Sprintf("роль %q не объявляет permissions.processors и поэтому сейчас получает все обработки (%d); задайте processors: {}, явную карту или processors_default: allow до следующего минорного релиза",
+				"rbac.processors-implicit-deny",
+				fmt.Sprintf("роль %q не объявляет permissions.processors и поэтому не получает доступ к обработкам (%d); задайте processors: {}, явную карту или processors_default: allow",
 					role.Name, availableProcessors),
 				"Задайте permissions.processors: {} (запретить всё), явную карту разрешённых обработок или permissions.processors_default: allow (осознанно сохранить глобальный доступ)."))
 		case auth.ProcessorModeExplicitAllowAll:
 			processorsOpen = true
 			processorRoleWarnings = append(processorRoleWarnings, roleProcessorWarning(role,
 				"rbac.processors-explicit-allow-all",
-				fmt.Sprintf("роль %q осознанно сохраняет доступ ко всем обработкам (%d) через permissions.processors_default: allow; это не блокирует переключение плана 162, но риск остаётся",
+				fmt.Sprintf("роль %q осознанно сохраняет доступ ко всем обработкам (%d) через permissions.processors_default: allow; новые обработки тоже будут доступны",
 					role.Name, availableProcessors),
 				"Если глобальный доступ больше не нужен, замените processors_default: allow на processors: {} или явную карту."))
 		}

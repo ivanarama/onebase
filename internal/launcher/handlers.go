@@ -883,6 +883,10 @@ func (h *handler) startIsolated(w http.ResponseWriter, r *http.Request) {
 	if err == nil {
 		var dir string
 		if dir, err = pickProfileDir(root); err == nil {
+			// Профиль окна — рабочее место: без автозаполнения адресов и
+			// сохранения паролей (seedChromiumPrefs). Сбой подготовки окно не
+			// останавливает — открыть его важнее подсказки браузера.
+			_ = seedChromiumPrefs(dir)
 			err = h.isoBrowser.Open(dir, h.runner.BaseURL(b)+"/ui", mode, b.ID)
 		}
 	}

@@ -9,6 +9,15 @@ import (
 // violations invalidate the entire layer. It never broadens the previous layer's
 // targets: only existing items can be moved, renamed or made visible.
 func ApplyDelta(base Tree, delta Delta, layer Layer) (Tree, []Diagnostic, error) {
+	return applyDelta(base, base, delta, layer)
+}
+
+// Validation uses the tree on which a layer was edited; operations may need a
+// wider application tree so role-only targets retain their identities.
+func applyDelta(base, validationBase Tree, delta Delta, layer Layer) (Tree, []Diagnostic, error) {
+	if base.Context != validationBase.Context {
+		return Tree{}, nil, fmt.Errorf("navigation: validation base context differs")
+	}
 	if err := delta.Validate(layer); err != nil {
 		return Tree{}, nil, err
 	}
@@ -16,7 +25,7 @@ func ApplyDelta(base Tree, delta Delta, layer Layer) (Tree, []Diagnostic, error)
 	if err != nil {
 		return Tree{}, nil, err
 	}
-	hash, err := base.Hash()
+	hash, err := validationBase.Hash()
 	if err != nil {
 		return Tree{}, nil, err
 	}
@@ -101,6 +110,13 @@ func ApplyDelta(base Tree, delta Delta, layer Layer) (Tree, []Diagnostic, error)
 // Diagnostics carry codes and stable IDs, never the stored JSON or its titles.
 // A nil slice denotes an absent key; a present empty JSON value is corrupt.
 func Compose(base Tree, adminRaw, userRaw []byte) (Tree, []Diagnostic) {
+	return ComposeWithAdminBase(base, base, adminRaw, userRaw)
+}
+
+// ComposeWithAdminBase checks the common delta's BaseHash against the same
+// configuration basis used by its editor, while applying it to the complete
+// layer base. Personal layers still validate against the composed common tree.
+func ComposeWithAdminBase(base, adminBase Tree, adminRaw, userRaw []byte) (Tree, []Diagnostic) {
 	result := base
 	var diagnostics []Diagnostic
 	for _, input := range []struct {
@@ -114,7 +130,11 @@ func Compose(base Tree, adminRaw, userRaw []byte) (Tree, []Diagnostic) {
 		var next Tree
 		var current []Diagnostic
 		if err == nil {
-			next, current, err = ApplyDelta(result, delta, input.layer)
+			validationBase := result
+			if input.layer == AdminLayer {
+				validationBase = adminBase
+			}
+			next, current, err = applyDelta(result, validationBase, delta, input.layer)
 		}
 		if err != nil {
 			diagnostics = append(diagnostics, Diagnostic{Code: "invalid-layer", Node: string(input.layer), Message: "stored navigation layer is invalid", Warning: true})

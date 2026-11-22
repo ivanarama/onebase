@@ -34,12 +34,14 @@ test.beforeEach(async ({ page }) => {
 });
 test.afterEach(() => expect(errors).toEqual([]));
 
-async function openForm(page, suffix = 'new') {
+async function openForm(page, suffix = 'new', onVisible = () => {}) {
   // Use the shell's public open command, with the full production frame DOM.
   await page.evaluate(url => window.obOpenTab(url, 'Приемка'), ROOT + suffix);
   const handle = await frames(page).last().elementHandle();
   const frame = await handle.contentFrame();
   await expect(frame.locator('input[name="Наименование"]')).toBeVisible();
+  onVisible(frame);
+  await frame.waitForLoadState('domcontentloaded');
   return frame;
 }
 
@@ -83,6 +85,65 @@ async function persisted(page, id, name) {
   expect(response.ok()).toBe(true);
   expect(await response.text()).toContain(name);
 }
+
+test('tab close: a visible form waits for its real managed script before saving', async ({ page }) => {
+  let releaseScript, scriptBlocked, visible;
+  const scriptBarrier = new Promise(resolve => { releaseScript = resolve; });
+  const blocked = new Promise(resolve => { scriptBlocked = resolve; });
+  const shown = new Promise(resolve => { visible = resolve; });
+  const events = [];
+  page.on('request', request => {
+    if (new URL(request.url()).pathname.endsWith('/form-event')) events.push(request);
+  });
+  const handler = async route => {
+    // Hold delivery of the actual script, without replacing its bytes or APIs.
+    const response = await route.fetch();
+    scriptBlocked();
+    await scriptBarrier;
+    await route.fulfill({ response });
+  };
+  await page.route('**/static/managed.js', handler);
+  let opened = false;
+  const opening = openForm(page, 'new?loading=1', visible).then(frame => {
+    opened = true;
+    return frame;
+  });
+  let held;
+  try {
+    await blocked;
+    const loading = await shown;
+    // onVisible only observes the real visibility boundary. Drain the promise
+    // continuation: without the load barrier openForm would already return,
+    // even though the script is still withheld. No timer race is involved.
+    await Promise.resolve();
+    expect(opened).toBe(false);
+    expect(await loading.evaluate(() => ({
+      state: document.readyState,
+      fire: typeof window.obFire,
+      close: typeof window.obRequestFormClose,
+    }))).toEqual({ state: 'loading', fire: 'undefined', close: 'undefined' });
+    expect(events).toEqual([]);
+    releaseScript();
+    const frame = await opening;
+    expect(await frame.evaluate(() => ({
+      ready: document.readyState !== 'loading',
+      fire: typeof window.obFire,
+      close: typeof window.obRequestFormClose,
+    }))).toEqual({ ready: true, fire: 'function', close: 'function' });
+    held = await holdSave(page, frame, 'saved after runtime loaded');
+    held.release();
+    await expect(frames(page)).toHaveCount(0);
+    await expect.poll(() => closes.length).toBe(1);
+    expect(closes[0].close.allowed).toBe(true);
+    expect(events).toHaveLength(1);
+    await persisted(page, held.data.savedId, 'saved after runtime loaded');
+  } finally {
+    releaseScript();
+    await opening;
+    if (held) await held.finish();
+    await page.unroute('**/static/managed.js', handler);
+  }
+});
 
 test('tab close: early SSE closes only the saved form once and a reopened object stays open', async ({ page }) => {
   const first = await openForm(page);
@@ -189,3 +250,100 @@ for (const sameURL of [false, true]) {
     } finally { await held.finish(); }
   });
 }
+
+for (const choice of ['cancel', 'save', 'discard']) {
+  test(`tab close: a command preserves the dirty duplicate until ${choice}`, async ({ page }) => {
+    const seed = await openForm(page);
+    const held = await holdSave(page, seed, `original ${choice}`);
+    let id;
+    try {
+      id = held.data.savedId;
+      held.release();
+      await expect(frames(page)).toHaveCount(0);
+    } finally { await held.finish(); }
+    closes = [];
+    const source = await openForm(page, id);
+    await page.locator('.ob-tab-dup').click();
+    await expect(frames(page)).toHaveCount(2);
+    const duplicate = await (await frames(page).last().elementHandle()).contentFrame();
+    await duplicate.waitForLoadState('domcontentloaded');
+    const draft = `UNSAVED-DUPLICATE-DRAFT-2429-${choice}`;
+    await duplicate.locator('input[name="Наименование"]').fill(draft);
+    await page.locator('.ob-tab').first().click();
+    await source.locator('[data-ob-el="Закрыть"]').click();
+    await expect(duplicate.locator('#ob-managed-close-confirm')).toBeVisible();
+    await expect(duplicate.locator('input[name="Наименование"]')).toHaveValue(draft);
+    await duplicate.locator(`[data-ob-close-choice="${choice}"]`).click();
+    if (choice === 'cancel') {
+      await expect(duplicate.locator('#ob-managed-close-confirm')).toHaveCount(0);
+      expect(duplicate.isDetached()).toBe(false);
+      await expect(duplicate.locator('input[name="Наименование"]')).toHaveValue(draft);
+      expect(await (await page.request.get(ROOT + id)).text()).not.toContain(draft);
+    } else {
+      await expect.poll(() => duplicate.isDetached()).toBe(true);
+      await expect.poll(() => closes.length).toBeGreaterThan(0);
+      const body = await (await page.request.get(ROOT + id)).text();
+      if (choice === 'save') expect(body).toContain(draft);
+      else expect(body).not.toContain(draft);
+    }
+  });
+}
+
+test('tab close: dirty processor command closes its source and asks its independent duplicate', async ({ page }) => {
+  const url = '/ui/processor/ПриемкаКомандыЗакрытия';
+  await page.evaluate(url => window.obOpenTab(url, 'Обработка'), url);
+  const source = await (await frames(page).last().elementHandle()).contentFrame();
+  await source.waitForLoadState('domcontentloaded');
+  await source.locator('input[name="Текст"]').fill('source parameters');
+  await page.locator('.ob-tab-dup').click();
+  const duplicate = await (await frames(page).last().elementHandle()).contentFrame();
+  await duplicate.waitForLoadState('domcontentloaded');
+  await duplicate.locator('input[name="Текст"]').fill('independent parameters');
+  await page.locator('.ob-tab').first().click();
+  await source.locator('[data-ob-el="Закрыть"]').click();
+  await expect.poll(() => source.isDetached()).toBe(true);
+  await expect(duplicate.locator('#ob-managed-close-confirm')).toBeVisible();
+  await duplicate.locator('[data-ob-close-choice="cancel"]').click();
+  await expect(duplicate.locator('input[name="Текст"]')).toHaveValue('independent parameters');
+  await expect(frames(page)).toHaveCount(1);
+  // A repeated real command from a newly opened copy must not consume the
+  // refusal as permission to discard the remaining dirty document.
+  await page.locator('.ob-tab-dup').click();
+  const retry = await (await frames(page).last().elementHandle()).contentFrame();
+  await retry.waitForLoadState('domcontentloaded');
+  await retry.locator('[data-ob-el="Закрыть"]').click();
+  await expect(duplicate.locator('#ob-managed-close-confirm')).toBeVisible();
+  await duplicate.locator('[data-ob-close-choice="cancel"]').click();
+  await expect(duplicate.locator('input[name="Текст"]')).toHaveValue('independent parameters');
+});
+
+test('tab close: source input made after the handler snapshot still needs confirmation', async ({ page }) => {
+  await page.evaluate(() => window.obOpenTab('/ui/processor/ПриемкаКомандыЗакрытия', 'Обработка'));
+  const source = await (await frames(page).last().elementHandle()).contentFrame();
+  await source.waitForLoadState('domcontentloaded');
+  await source.locator('input[name="Текст"]').fill('sent snapshot');
+  let release, received;
+  const barrier = new Promise(resolve => { release = resolve; });
+  const responseReady = new Promise(resolve => { received = resolve; });
+  const handler = async route => {
+    const response = await route.fetch();
+    received();
+    await barrier;
+    await route.fulfill({ response });
+  };
+  await page.route('**/form-event', handler);
+  try {
+    await source.locator('[data-ob-el="Закрыть"]').click();
+    await responseReady;
+    await expect.poll(() => page.evaluate(() => window.closeAcceptance.commands.length)).toBe(1);
+    await source.locator('input[name="Текст"]').fill('newer unsaved input');
+    release();
+    await expect(source.locator('#ob-managed-close-confirm')).toBeVisible();
+    await source.locator('[data-ob-close-choice="cancel"]').click();
+    await expect(source.locator('input[name="Текст"]')).toHaveValue('newer unsaved input');
+    await expect(frames(page)).toHaveCount(1);
+  } finally {
+    release();
+    await page.unroute('**/form-event', handler);
+  }
+});

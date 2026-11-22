@@ -42,7 +42,14 @@ func Validate(entities []*Entity, enums []*Enum) error {
 	for _, en := range enums {
 		enumNames[en.Name] = true
 	}
+	byName := make(map[string]*Entity, len(entities))
 	for _, e := range entities {
+		byName[e.Name] = e
+	}
+	for _, e := range entities {
+		if err := validateChoiceRowStyle(e, byName); err != nil {
+			return err
+		}
 		for _, f := range e.Fields {
 			if f.RefEntity != "" && !entityNames[f.RefEntity] && !IsSystemRefTarget(f.RefEntity) {
 				return fmt.Errorf("entity %s: field %s references unknown entity %s", e.Name, f.Name, f.RefEntity)
@@ -236,15 +243,24 @@ func validateFieldIDs(e *Entity) error {
 }
 
 func validateIndexes(e *Entity) error {
+	names := map[string]string{}
 	for i, idx := range e.Indexes {
 		if len(idx.Fields) == 0 {
 			return fmt.Errorf("entity %s: indexes[%d].fields is required", e.Name, i)
 		}
+		cols := []string{}
 		for _, name := range idx.Fields {
 			if findEntityField(e, name) == nil {
 				return fmt.Errorf("entity %s: index references unknown field %s", e.Name, name)
 			}
+			cols = append(cols, ColumnName(*findEntityField(e, name)))
 		}
+		name := StableEntityIndexName(TableName(e.Name), cols, idx.Unique)
+		signature := fmt.Sprintf("%t:%q", idx.Unique, cols)
+		if old, ok := names[name]; ok && old != signature {
+			return fmt.Errorf("entity %s: incompatible declarations for index %s", e.Name, name)
+		}
+		names[name] = signature
 	}
 	return nil
 }

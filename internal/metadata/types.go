@@ -329,6 +329,9 @@ type Entity struct {
 	// Activity — opt-in механизм активности справочника. Nil означает, что
 	// справочник не получает специальных фильтров и скрытия из выбора.
 	Activity *ActivityConfig
+	// ChoiceRowStyle — оформление строк выбора ссылок на справочник
+	// (`choice_row_style`, см. choice_row_style.go). nil — без оформления.
+	ChoiceRowStyle *ChoiceRowStyle
 	// ListMode — режим загрузки списка по умолчанию: "" / "pages" (постранично)
 	// или "feed" (лента с догрузкой по скроллу, как динамический список 1С).
 	// Пользователь может переопределить тумблером (запоминается per-сущность).
@@ -844,6 +847,22 @@ func InfoRegTableName(regName string) string { return SQLIdent(InfoRegTableLogic
 
 // InfoRegTableLogical — логическое имя таблицы регистра сведений.
 func InfoRegTableLogical(regName string) string { return "инфо_" + strings.ToLower(regName) }
+
+// TablePartRowNumberField — номер строки табличной части в запросе
+// («ТЧ.НомерСтроки», как в 1С); в таблице это колонка «строка».
+const TablePartRowNumberField = "НомерСтроки"
+
+// TablePartQueryEntity — табличная часть как источник запроса: номер строки и
+// реквизиты ТЧ под именем name. Ссылка такого источника — владелец строки.
+func TablePartQueryEntity(owner *Entity, tp *TablePart, name string) *Entity {
+	if owner == nil || tp == nil {
+		return nil
+	}
+	fields := make([]Field, 0, len(tp.Fields)+1)
+	fields = append(fields, Field{Name: TablePartRowNumberField, Type: FieldTypeNumber})
+	fields = append(fields, tp.Fields...)
+	return &Entity{Name: name, Kind: owner.Kind, Fields: fields}
+}
 
 func TablePartTableName(entityName, tpName string) string {
 	return SQLIdent(TablePartTableLogical(entityName, tpName))

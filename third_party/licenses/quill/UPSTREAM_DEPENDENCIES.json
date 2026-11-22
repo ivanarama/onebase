@@ -1,0 +1,762 @@
+{
+  "description": "All seven dependency packages represented in the published Quill 2.0.3 full-bundle source map. Each listed source matches the pinned package archive after CRLF-to-LF normalization. Original licensing documents retain their bytes.",
+  "source_map": "https://registry.npmjs.org/quill/-/quill-2.0.3.tgz#package/dist/quill.js.map",
+  "source_map_sha256": "a508052334c1c1171d529da80b19948f0521c5cc1db341833908a25a10a2722f",
+  "packages": [
+    {
+      "name": "parchment",
+      "version": "3.0.0",
+      "license": "BSD-3-Clause",
+      "tarball": "https://registry.npmjs.org/parchment/-/parchment-3.0.0.tgz",
+      "integrity": "sha512-HUrJFQ/StvgmXRcQ1ftY6VEZUq3jA2t9ncFN4F84J/vN0/FPpQF+8FKXb3l6fLces6q0uOHj6NJn+2xvZnxO6A==",
+      "files": [
+        "third_party/licenses/quill/dependencies/parchment/3.0.0/LICENSE"
+      ],
+      "matched_sources": [
+        {
+          "path": "src/scope.ts",
+          "sha256": "f239421e1ec5f7151a0d4a4d365b95403e8ea61ad3b7c02995b6cb31bbfa48e0"
+        },
+        {
+          "path": "src/attributor/attributor.ts",
+          "sha256": "ee6cfa0bcd8a28046c1f9e6124a40aca46b43fdb45ad4bef2422cbf26c972f55"
+        },
+        {
+          "path": "src/error.ts",
+          "sha256": "6e1f66bd32063e3042b5daf7351188eee38a9dc404193a4e43ee4e0b8828cbbd"
+        },
+        {
+          "path": "src/registry.ts",
+          "sha256": "05580567e7ee054bc2d7cc3da96db236c358213def49f94498af4f662b3a9b72"
+        },
+        {
+          "path": "src/attributor/class.ts",
+          "sha256": "8c852955a94e17ea4119ec3b9aaee7af6e0e70fb64434eba1b0678ba4f8a4808"
+        },
+        {
+          "path": "src/attributor/style.ts",
+          "sha256": "bfb44d90548046cb51c7dc9bc5da965881f43a6730f349babe52fbb6fca18baa"
+        },
+        {
+          "path": "src/attributor/store.ts",
+          "sha256": "f147d8e581b8cee95f9f86825f78ca7dd792876977b3a85f8da07ea47497333c"
+        },
+        {
+          "path": "src/blot/abstract/shadow.ts",
+          "sha256": "51ac880c8bee5eda3f2040482bc98cafee7e33a660949e34d4104b9d4bfa4f5d"
+        },
+        {
+          "path": "src/blot/abstract/leaf.ts",
+          "sha256": "93bf0aeb5d361a63360dfae1e6e2a21b7aa35384b3895f6226d50fceefeb3255"
+        },
+        {
+          "path": "src/collection/linked-list.ts",
+          "sha256": "96d942673e86a1c9b58b1207fdb59dd40103749609e4198ae2d5c235e2cd9349"
+        },
+        {
+          "path": "src/blot/abstract/parent.ts",
+          "sha256": "9efcb3397f2ff7db51733f8a2a7e81ea24e52b8944429aed272a685d77a4660f"
+        },
+        {
+          "path": "src/blot/inline.ts",
+          "sha256": "da80575c2aa9e67eb0faf5a931b12f97627eaa660cabdd6233dab9655eaa0760"
+        },
+        {
+          "path": "src/blot/block.ts",
+          "sha256": "cb6d06b8ea02f196e09ec5989830b965a47da2c23155df1415142fef033a05d7"
+        },
+        {
+          "path": "src/blot/abstract/container.ts",
+          "sha256": "1008d8349f518f6de214f497a16fc6210f8d8b293320d8878bfebe5524e00d36"
+        },
+        {
+          "path": "src/blot/embed.ts",
+          "sha256": "32271749ea1aeeaa308d8dd63b3aeb815049877adc2d8a9057368c14b323d276"
+        },
+        {
+          "path": "src/blot/scroll.ts",
+          "sha256": "e9bd1df9a5805d707217e1cc07fc9e3d2f216b07f50d7e0575058df30333fa4e"
+        },
+        {
+          "path": "src/blot/text.ts",
+          "sha256": "03c0e935523e48b333f1654450f8d31aa9d9abcd4068801e9fa348d5acdd7184"
+        }
+      ]
+    },
+    {
+      "name": "quill-delta",
+      "version": "5.1.0",
+      "license": "BSD-3-Clause",
+      "tarball": "https://registry.npmjs.org/quill-delta/-/quill-delta-5.1.0.tgz",
+      "integrity": "sha512-X74oCeRI4/p0ucjb5Ma8adTXd9Scumz367kkMK5V/IatcX6A0vlgLgKbzXWy5nZmCGeNJm2oQX0d2Eqj+ZIlCA==",
+      "files": [
+        "third_party/licenses/quill/dependencies/quill-delta/5.1.0/LICENSE"
+      ],
+      "matched_sources": [
+        {
+          "path": "src/AttributeMap.ts",
+          "sha256": "9e68d856c890faf341ce58d2cf61c311cbdadd096392dee1d1f10dd0ff551157"
+        },
+        {
+          "path": "src/Delta.ts",
+          "sha256": "bfa22306baf3d562caaf3de719b1afd9de695e8b4dd5c5f6d1dccc36e75029ef"
+        },
+        {
+          "path": "src/Op.ts",
+          "sha256": "75633819ac6bb0f20f617cb7ed7be73e3071bbb14d575acc1cc4642cc63fdd81"
+        },
+        {
+          "path": "src/OpIterator.ts",
+          "sha256": "071d85539eaae6848fa50d9f2f682c8625f30cf8844d82275544426d326e8963"
+        }
+      ],
+      "metadata_license": "MIT",
+      "note": "The published package metadata declares MIT, but the original LICENSE contains BSD 3-Clause terms. The original LICENSE is preserved without alteration and its terms are recorded here."
+    },
+    {
+      "name": "eventemitter3",
+      "version": "5.0.1",
+      "license": "MIT",
+      "tarball": "https://registry.npmjs.org/eventemitter3/-/eventemitter3-5.0.1.tgz",
+      "integrity": "sha512-GWkBvjiSZK87ELrYOSESUYeVIc9mvLLf/nXalMOS5dYrgZq9o5OVkbZAVM06CVxYsCwH9BDZFPlQTlPA1j4ahA==",
+      "files": [
+        "third_party/licenses/quill/dependencies/eventemitter3/5.0.1/LICENSE"
+      ],
+      "matched_sources": [
+        {
+          "path": "index.js",
+          "sha256": "1560f251de5d28d2c15ff070215d2c5c0fa06f1a92e8d6522bbee37e06d2a6b5"
+        }
+      ]
+    },
+    {
+      "name": "fast-diff",
+      "version": "1.3.0",
+      "license": "Apache-2.0",
+      "tarball": "https://registry.npmjs.org/fast-diff/-/fast-diff-1.3.0.tgz",
+      "integrity": "sha512-VxPP4NqbUjj6MaAOafWeUn2cXWLcCtljklUtZf0Ind4XQ+QPtmA0b18zZy0jIQx+ExRVCR/ZQpBmik5lXshNsw==",
+      "files": [
+        "third_party/licenses/quill/dependencies/fast-diff/1.3.0/LICENSE",
+        "third_party/licenses/quill/dependencies/fast-diff/1.3.0/diff.js.HEADER.txt"
+      ],
+      "matched_sources": [
+        {
+          "path": "diff.js",
+          "sha256": "d1da88e1a0e46b4e0c44d25b39c6940c8305810b92446333331b45226a0601e0"
+        }
+      ],
+      "source_notice": {
+        "path": "package/diff.js",
+        "extraction": "Original leading comment, through the closing */ and following LF; retains the Google copyright and upstream attribution."
+      }
+    },
+    {
+      "name": "lodash.clonedeep",
+      "version": "4.5.0",
+      "license": "MIT",
+      "tarball": "https://registry.npmjs.org/lodash.clonedeep/-/lodash.clonedeep-4.5.0.tgz",
+      "integrity": "sha512-H5ZhCF25riFd9uB5UCkVKo61m3S/xZk1x4wA6yp/L3RFP6Z/eHH1ymQcGLo7J3GMPfm0V/7m1tryHuGVxpqEBQ==",
+      "files": [
+        "third_party/licenses/quill/dependencies/lodash.clonedeep/4.5.0/LICENSE"
+      ],
+      "matched_sources": [
+        {
+          "path": "index.js",
+          "sha256": "43e8e3a411bc763300082c0cefe036ef344cd5fb840b6649d878338a3ec2bc02"
+        }
+      ]
+    },
+    {
+      "name": "lodash.isequal",
+      "version": "4.5.0",
+      "license": "MIT",
+      "tarball": "https://registry.npmjs.org/lodash.isequal/-/lodash.isequal-4.5.0.tgz",
+      "integrity": "sha512-pDo3lu8Jhfjqls6GkMgpahsF9kCyayhgykjyLMNFTKWrpVdAQtYyB4muAMWozBB4ig/dtWAmsMxLEI8wuz+DYQ==",
+      "files": [
+        "third_party/licenses/quill/dependencies/lodash.isequal/4.5.0/LICENSE"
+      ],
+      "matched_sources": [
+        {
+          "path": "index.js",
+          "sha256": "e552928a511748303101cfd03826a777cfa359eade6a4a60f92c923edbf9184c"
+        }
+      ]
+    },
+    {
+      "name": "lodash-es",
+      "version": "4.17.21",
+      "license": "MIT",
+      "tarball": "https://registry.npmjs.org/lodash-es/-/lodash-es-4.17.21.tgz",
+      "integrity": "sha512-mKnC+QJ9pWVzv+C4/U3rRsHapFfHvQFoFB92e52xeyGMcX6/OlIl78je1u8vePzYZSkkogMPJ2yjxxsb89cxyw==",
+      "files": [
+        "third_party/licenses/quill/dependencies/lodash-es/4.17.21/LICENSE"
+      ],
+      "matched_sources": [
+        {
+          "path": "_listCacheClear.js",
+          "sha256": "e0e283b9176131c84766c243101a75d90566b4577e5c70cc6a38ad6266d805f6"
+        },
+        {
+          "path": "_assocIndexOf.js",
+          "sha256": "b34ff3bbc5cf630e9ea1103eacd7bfcc208347a6b616398e515c7aee821bf8a4"
+        },
+        {
+          "path": "_listCacheDelete.js",
+          "sha256": "4f60c332ff1ea93b47e744cfbeccb8cc65eed33e7bb302d6bad1fb596f70b186"
+        },
+        {
+          "path": "_ListCache.js",
+          "sha256": "a8c13a041707d9c96eff21d95a78326b6e2af12b067527bcba22108ce15b600c"
+        },
+        {
+          "path": "_listCacheGet.js",
+          "sha256": "25d578131e42d496bf92590cc2daa636203fc0512eeab29e2add3ac569921e03"
+        },
+        {
+          "path": "_listCacheHas.js",
+          "sha256": "c091833394e006cf700731a117a75310786726246843f225de698e94f1d1e798"
+        },
+        {
+          "path": "_listCacheSet.js",
+          "sha256": "0696b9f99b4ed89c08725c8acc805b7cc493078ea0fb8d9153bfb920878fa029"
+        },
+        {
+          "path": "_Map.js",
+          "sha256": "014aa839395eedfb215d1a994754db6716ba8c65ff3945b986270a4743b269bb"
+        },
+        {
+          "path": "_nativeCreate.js",
+          "sha256": "59c4a564c25a021902259cb237cfa331daf056423d359258ac968c60f51aa324"
+        },
+        {
+          "path": "_hashGet.js",
+          "sha256": "5aa4530201b81f25dc5609240b855f11a8bdd85d92c6bfb8cb2566758bfeaac7"
+        },
+        {
+          "path": "_hashHas.js",
+          "sha256": "92a91d1122b450660d889520e13f185829e296334b1cc708a7b0009a2c568b71"
+        },
+        {
+          "path": "_Hash.js",
+          "sha256": "7221393e8931adc88430d3badefee1568ffccf91a6efcd9dda2be498f4a09551"
+        },
+        {
+          "path": "_hashClear.js",
+          "sha256": "54d4b21fbc05b32b246c4449e27a30628f9d8b6749c08ae965ff8c81af6dad67"
+        },
+        {
+          "path": "_hashDelete.js",
+          "sha256": "eaf93621141b5c23d99a299c6f8620192faf0fcc71f4f00c01ce5de8f98bc92a"
+        },
+        {
+          "path": "_hashSet.js",
+          "sha256": "6535755fba2510b74079e573dc12f8c4f750131793d658ace64cf128fd1e0db2"
+        },
+        {
+          "path": "_getMapData.js",
+          "sha256": "4ab0307467b45546bd3d8146d67f0e123f2049e6934722653803fe90b3484374"
+        },
+        {
+          "path": "_isKeyable.js",
+          "sha256": "207b697e802fc7f957d1275f7da727f59c6673e58ee2078fbc1af56f5f08c0de"
+        },
+        {
+          "path": "_MapCache.js",
+          "sha256": "fd27ffa20196943af9cbb4694555582d3045fff54b6f808269e4d3a645c3d886"
+        },
+        {
+          "path": "_mapCacheClear.js",
+          "sha256": "0be01bc64f84e1252f501dbe68d2166eb97ac321bf6638415478ff24a26ac388"
+        },
+        {
+          "path": "_mapCacheDelete.js",
+          "sha256": "a52b87a49edecdb1b47793b5bb26d41e4bf379c369a420949302e1b1562b5af7"
+        },
+        {
+          "path": "_mapCacheGet.js",
+          "sha256": "bb71dbbe31d7fbd56016b622ea28b4c1ec570a8c910030dc927465737b458a4e"
+        },
+        {
+          "path": "_mapCacheHas.js",
+          "sha256": "5b9c230d5e00aba2d482404cc8dbe327b23ad29325d13a0e49e93cfd0b1bf54d"
+        },
+        {
+          "path": "_mapCacheSet.js",
+          "sha256": "43318a641896356f4b187bee7aad9be1147b766722108a7e7425d7e1ea322bfa"
+        },
+        {
+          "path": "_Stack.js",
+          "sha256": "391b608ace36e0845f917ab7a5bbaab07930f9ad8b570849857ed564a0ec3a76"
+        },
+        {
+          "path": "_stackClear.js",
+          "sha256": "2f18f696265ae6318deb51419e121ab543b4fd9ff240892e8e054d944db8020a"
+        },
+        {
+          "path": "_stackDelete.js",
+          "sha256": "ae947fc8f29882a437db228bcdac90cd048f94bdd758e508b53987be2e28cdfe"
+        },
+        {
+          "path": "_stackGet.js",
+          "sha256": "ae5633328aae57109e1ce84e70a587c2ba90503294f758ab8086d032ebb40897"
+        },
+        {
+          "path": "_stackHas.js",
+          "sha256": "06066c99b9909bdc25bb702b579ca29a69ab478d9819506af29aa7e6476eddba"
+        },
+        {
+          "path": "_stackSet.js",
+          "sha256": "4f96a1dfb190aae58f59bc26cd1a27fae1d10abc338e1f57a67e69d47b832cbe"
+        },
+        {
+          "path": "_Symbol.js",
+          "sha256": "631160c3c0cbd05ec8a3d1934ded4a312504a29f04a00be2b29372d00dd6bc6d"
+        },
+        {
+          "path": "_Uint8Array.js",
+          "sha256": "0181e8a163773e63ca1c366a134df3306c5fec28f487beb326b6bb92113d619d"
+        },
+        {
+          "path": "_baseTimes.js",
+          "sha256": "0d71867db092ef76aed4436956c0cf26d0990eb5d19c88f74edbe8c7ae2dfc93"
+        },
+        {
+          "path": "_arrayLikeKeys.js",
+          "sha256": "c441c2b158f992a5dd14bae0b35d20c3ec25a8a5b6cd439e1be0b1764e831612"
+        },
+        {
+          "path": "_arrayPush.js",
+          "sha256": "ef2cb71a84885b726882f9664e3c2078279012ba7b220935b7e7390d85d89288"
+        },
+        {
+          "path": "_assignValue.js",
+          "sha256": "30c56330342d8af0405b9a113f73232fb6fc748a4177787d2b61d1a894cefdf9"
+        },
+        {
+          "path": "_baseAssignValue.js",
+          "sha256": "fc102066006ab1aa06bf1ed8329c64804b8c61c616840f0739031aafc009fb91"
+        },
+        {
+          "path": "_baseGetAllKeys.js",
+          "sha256": "45f92029359aaddc01b6aaf58370ba554430f141d1ff8879f6ef829c03ed4e44"
+        },
+        {
+          "path": "_getRawTag.js",
+          "sha256": "0023dec54160317b70d52df1d7918638bc16a2869b1bf355f0a4f3e755aa6faf"
+        },
+        {
+          "path": "_objectToString.js",
+          "sha256": "8f1bb6043dc27219e71dfae28900a7f214a0856118a628efeb120169fe46fe8c"
+        },
+        {
+          "path": "_baseGetTag.js",
+          "sha256": "3a9eebe37ba231eff0380b5f76ac5b5fcee4590665642fd052d77aa51c7d063f"
+        },
+        {
+          "path": "_baseUnary.js",
+          "sha256": "25d6f22dcecef2d761e3059330425d1c585dfa81d50ba1dcd82d5524bfa78b53"
+        },
+        {
+          "path": "_cloneArrayBuffer.js",
+          "sha256": "04c06ac0667c7681872950fefa3d82af988cbb2f45e7ac94ad30a1a7fbca760e"
+        },
+        {
+          "path": "_cloneBuffer.js",
+          "sha256": "879343bd3fe02c37cbd8691dfb7d2b3599a069bc646bc415d49b347b06e7f801"
+        },
+        {
+          "path": "_cloneTypedArray.js",
+          "sha256": "40396608091618700dc31a89b5e3a70d8a77158134bbe85ca0a33f42061cf90f"
+        },
+        {
+          "path": "_copyArray.js",
+          "sha256": "66e841eb36a87af2b6bd8d7a21651d2f6c65ee11186ba8c0cd8a5f7856aa626c"
+        },
+        {
+          "path": "_copyObject.js",
+          "sha256": "f348153f6d3fb121b2c2afe79ae0484fa12e5732772720aa44e128badf42b63e"
+        },
+        {
+          "path": "_defineProperty.js",
+          "sha256": "08fe1a52a602829f143cf1a1dd4a133533b1a9cda8ef2071563dcb21750c7517"
+        },
+        {
+          "path": "_freeGlobal.js",
+          "sha256": "0b65c37b3c1ce6d1800cb59a330dde73f1009f0d10eeaf8fd45f7607b87db4c5"
+        },
+        {
+          "path": "_getAllKeys.js",
+          "sha256": "01e917e05dd9a3dce40c4b68fe47fe57b6b5a349074e00a4a60768b95fada6e5"
+        },
+        {
+          "path": "_isMasked.js",
+          "sha256": "cc641b21108046e4ebe15220dae4f7ad463760596800ebf31d5e53df1b98f152"
+        },
+        {
+          "path": "_coreJsData.js",
+          "sha256": "020778ed390efefeb8ea3cf88873e9e2818784b3e26fa001ec51fa81c71d0392"
+        },
+        {
+          "path": "_baseIsNative.js",
+          "sha256": "1557c70dbb11eba112c6f5454e3cbaf7a714656da0db17e0dfe83441a70e31b1"
+        },
+        {
+          "path": "_getNative.js",
+          "sha256": "b93d64fd14cab48b0ad9b0f1b896ee8dcd74d8d5a20ca9cae6f34aa4a68ae9ef"
+        },
+        {
+          "path": "_getValue.js",
+          "sha256": "afff70502a4a536f971f961811013811c177e6f885d1e7e4e41c48c08ea6d6c7"
+        },
+        {
+          "path": "_getPrototype.js",
+          "sha256": "0d28834baa350bc2ff483720439732052e2695a44b52cce790c99677fc733cf4"
+        },
+        {
+          "path": "_arrayFilter.js",
+          "sha256": "46a23fd1969903486b620f5de048c9347f24863f13416db0a632de56cc78b479"
+        },
+        {
+          "path": "_getSymbols.js",
+          "sha256": "34d1bb981fb74a7c1193363e21f8d2634aca05436151bc2297bd9bbf0cd8080c"
+        },
+        {
+          "path": "_DataView.js",
+          "sha256": "0c4811491cd0c415553118f42f9b31112ed58bdb3941358a99deec9347e7a829"
+        },
+        {
+          "path": "_Promise.js",
+          "sha256": "55c26a3a24e9f2e6158d36fdeec3b34d59d9f9be08e415a7f50936429595c656"
+        },
+        {
+          "path": "_Set.js",
+          "sha256": "84d53490631612489f33e3a4a9199f22c853e58b337aa1e10408e63d5129e216"
+        },
+        {
+          "path": "_WeakMap.js",
+          "sha256": "1248b893bd82f38179e2ac6df0ff2fa8daf5e5becd11b55d8b2073a5eaab3f47"
+        },
+        {
+          "path": "_getTag.js",
+          "sha256": "86877c73f440b311c85b96f32a5e05995f0e247ef86091bc3d5f4e585439f8c6"
+        },
+        {
+          "path": "_baseCreate.js",
+          "sha256": "d2298952b6832fe420556a324428d247ae04540a564bf95d30f4e1bd7370a668"
+        },
+        {
+          "path": "_initCloneObject.js",
+          "sha256": "18145c5222148da5ee58b43862e8790ac455f1752fa86e881306a335f403ea7f"
+        },
+        {
+          "path": "_isIndex.js",
+          "sha256": "33b5bf1805dd076edfc1199e114995a62170f8d6c835e0035ec05099ae29fa97"
+        },
+        {
+          "path": "_isPrototype.js",
+          "sha256": "df65c802abe765ca4473d3dd632c0b3d13e9f2397dedd7cf9742f0157b2396ed"
+        },
+        {
+          "path": "_nodeUtil.js",
+          "sha256": "f81d8e969afead3562231a1c368fcf884b51339ee04aff07a2b67f8ba794f03b"
+        },
+        {
+          "path": "_overArg.js",
+          "sha256": "599268d0a0a7da23b421ca0cfefbea1f295e44c33bab99fb87df38f4ef97bb9c"
+        },
+        {
+          "path": "_root.js",
+          "sha256": "df58ff96c454ca91ace20d20e6af49b354c70dfba7e737adc00cd23e8ff77168"
+        },
+        {
+          "path": "_toSource.js",
+          "sha256": "a2333d6455d5a8802b8e8d64f0de422f04a4603cf477429d2baabb8021ec9032"
+        },
+        {
+          "path": "_getSymbolsIn.js",
+          "sha256": "beb7a439db355b7f133a0460747b072bcf57f5f85f999b0e03262d2b409206c7"
+        },
+        {
+          "path": "_getAllKeysIn.js",
+          "sha256": "9609ec06ed5e1229cc9e6cc156be0806b9108483ae8bb2e45092c764ea011a71"
+        },
+        {
+          "path": "_initCloneArray.js",
+          "sha256": "e29650695eb943a391552749678b039dfcd0c1f25294ffa5eee3c5dc4388f990"
+        },
+        {
+          "path": "_cloneRegExp.js",
+          "sha256": "683f8e1bd6e13beb3cc33858eb9d38da573df4aa6a2e02f035a2723ba05c21c4"
+        },
+        {
+          "path": "_cloneSymbol.js",
+          "sha256": "6be913cb0962aa51be9588bd01e02b3db72443a574b7d65ecf8036c78ddf4d4b"
+        },
+        {
+          "path": "_initCloneByTag.js",
+          "sha256": "e1edeb1cead74091a0ebbdeb8ccc1ca84248afc08294a1732aa984ef630dc0df"
+        },
+        {
+          "path": "_cloneDataView.js",
+          "sha256": "b9a868e7012cd534c7f01d0d65173b005f0252fbd6c5b607423998c2d33f968d"
+        },
+        {
+          "path": "isMap.js",
+          "sha256": "9cdd2a2b80768554c2d0d88c8fe8460f07d55f9832ca1149a3156d139aff572d"
+        },
+        {
+          "path": "_baseIsMap.js",
+          "sha256": "1c0b6aa98f5a9b4b21c56aaad2e662b8f3c7c483592a964e514443424d1d4493"
+        },
+        {
+          "path": "isSet.js",
+          "sha256": "37c903d4dc8656e75a406a2a71577858bc1f61b40aaa610fefb20423fd9dbd4a"
+        },
+        {
+          "path": "_baseIsSet.js",
+          "sha256": "33903d3fdffb6d08dd4beefdb4a2e16c240af87d4ca0c4558aa730b1a87ea55d"
+        },
+        {
+          "path": "_baseClone.js",
+          "sha256": "69d03c7e6fb31a642cd17ae233aa926c4a30538d97562c86d599c6fba95d7603"
+        },
+        {
+          "path": "_copySymbolsIn.js",
+          "sha256": "589716ac9ef018b9c3ebb65d8f1aa8bb18b1cda819b5309a6374564cc3e370b6"
+        },
+        {
+          "path": "_baseAssignIn.js",
+          "sha256": "d5e10d50ae24b20e36ecb2c7596ba0ac50431e7a19d75d270b896be3257f1e24"
+        },
+        {
+          "path": "_copySymbols.js",
+          "sha256": "4895deb1d808c6234457aeab3b06cc9cac80f6b79a0190fef8fd65d78ae91dc2"
+        },
+        {
+          "path": "_baseAssign.js",
+          "sha256": "1cce8f5275323ec54e7cc5539e260b8730606c16a14f56de7a815d46ef046297"
+        },
+        {
+          "path": "_arrayEach.js",
+          "sha256": "cfbf3667657e0f260600a9aa9359a8bde73a9241df474f77f17c06cd9fe76b4d"
+        },
+        {
+          "path": "cloneDeep.js",
+          "sha256": "1122beed4773529f5b9ef627486f7f5c4d116438f3e651d8ef6041994ae3a88f"
+        },
+        {
+          "path": "eq.js",
+          "sha256": "3a51729bde3af1d9bacf9b67e966d8c154e22b02f5e1cecc13f53f7f00889c13"
+        },
+        {
+          "path": "_baseIsArguments.js",
+          "sha256": "8cc4e523affa6237c8177cd7cb038ede5e6778deaf3fa9c052f3e416840e0334"
+        },
+        {
+          "path": "isArguments.js",
+          "sha256": "08791025dc5d7ec5183e290aa2aa6a9c4af78703f0d42d1b9421b607c3199fcc"
+        },
+        {
+          "path": "isArray.js",
+          "sha256": "0d9bcdfdf53955d9253076ddd68e0b992b2c91fb8364baa2ca971e57cbb74e4b"
+        },
+        {
+          "path": "isArrayLike.js",
+          "sha256": "46956ba526a01c3371fe26a492bf2a247b20d995e6891f2ac99a17b1ab64b49f"
+        },
+        {
+          "path": "isBuffer.js",
+          "sha256": "683ac01368bb0b51e7571332797cdec13cf5fa26a79ad20764045f01b1d249d2"
+        },
+        {
+          "path": "stubFalse.js",
+          "sha256": "fd1d278ab0f9329d2b39c180bb97fcbfb609ec117f89443fc2ed898b633493ea"
+        },
+        {
+          "path": "_SetCache.js",
+          "sha256": "0dd677f901228955ec136fb35bb20c4a8dbc4c1ef63649298a29b7b0958b9b07"
+        },
+        {
+          "path": "_setCacheAdd.js",
+          "sha256": "401386f4cc34e3675ee768b340e521df8b021abb3b9e8fba9b2a49614d54a189"
+        },
+        {
+          "path": "_setCacheHas.js",
+          "sha256": "fc24b8606ffad00aab53dd47f42225ca4a97272b7b90df1db7f75a57cb49761e"
+        },
+        {
+          "path": "_arraySome.js",
+          "sha256": "0b50b5e018eabcb2a0b041bc02b5ae0c8d1f16914f94f376ecaf7f887cbd3aa3"
+        },
+        {
+          "path": "_equalArrays.js",
+          "sha256": "ef1ec1ba10240336affff703995642b5f44f9b9278fa81559e4f7ca231877413"
+        },
+        {
+          "path": "_cacheHas.js",
+          "sha256": "142cd8ff86e5e823b1262c6ae0e7843b28c3b0e806c502f7d11daddf941cbc14"
+        },
+        {
+          "path": "_mapToArray.js",
+          "sha256": "fd24c54b48cbdcb659a15dc013554a473fa7524b7c5fa2a7f8dc2229c7ad2bcc"
+        },
+        {
+          "path": "_setToArray.js",
+          "sha256": "316f948fca04c5b007fe78c6edc199a69496beef8d395f44bdc0dbfd7a46a1ed"
+        },
+        {
+          "path": "_equalByTag.js",
+          "sha256": "72a492144060bc60415836aa1f8dc60949a75923f26d47c6007f16da092ef8b0"
+        },
+        {
+          "path": "_equalObjects.js",
+          "sha256": "c386d0f1a6cb4d2a8b2803ef06cd69199b2e00c7d3062a6ea8ab9b0308bac243"
+        },
+        {
+          "path": "_baseIsEqualDeep.js",
+          "sha256": "64174049ab03796b0cf775075cadbf74ddbc7d5bb80c10835117417375c16528"
+        },
+        {
+          "path": "_baseIsEqual.js",
+          "sha256": "332f33381628ed8c9849cb3e218d0e7122d47a736fea46f7abe76c1ef6904469"
+        },
+        {
+          "path": "isEqual.js",
+          "sha256": "60c66b9d8e67d807bb91d2487f05a5400c14031b4c59aee9920646529d494d17"
+        },
+        {
+          "path": "isFunction.js",
+          "sha256": "4cf0f598213e142e5d9ad09f17d3611723a9e2e3def000a39edbf38b493b3b08"
+        },
+        {
+          "path": "isLength.js",
+          "sha256": "ef8193123dc3fbd12be9893aa39aea7df0a779074e604d853c56da1c09d24e11"
+        },
+        {
+          "path": "isObject.js",
+          "sha256": "fc44c8f265db1492ea04f777d9e2d8598b44d481f5eb38360cb58c1e45b8cbd9"
+        },
+        {
+          "path": "isObjectLike.js",
+          "sha256": "e45d69136695e8568c6fb3c7327f96ac1a8ff7284b1b22f26fb4654255fd0c6c"
+        },
+        {
+          "path": "_baseIsTypedArray.js",
+          "sha256": "eb8a844c83bf159a41222acde165ab3f4a9983be77297496550164d10633b076"
+        },
+        {
+          "path": "isTypedArray.js",
+          "sha256": "ea3531a60d17525b79f484377cd4053f32fec478822dd2b51ca63ade12520737"
+        },
+        {
+          "path": "_nativeKeys.js",
+          "sha256": "df95037fd30b575dc9a1173fea65d68bd8cdb07ba10186b7cc43c4d7c69a92f9"
+        },
+        {
+          "path": "_baseKeys.js",
+          "sha256": "5ad980ce937752fa85ce2e48e981eed26ad9b0ee83a0b34491b4c032ab393aee"
+        },
+        {
+          "path": "keys.js",
+          "sha256": "cdcc1e10b113af10125daaae5cde3135d581e7f53a22d1190fa12bee62c3315e"
+        },
+        {
+          "path": "_baseKeysIn.js",
+          "sha256": "c582f1f38230256bebba36251eccfbf082e7a395bf7b85aecc4496fd798dc83a"
+        },
+        {
+          "path": "_nativeKeysIn.js",
+          "sha256": "e63e54e1eaf58287382c811139a5a497512356c0c192f646e00abd0e94bf625b"
+        },
+        {
+          "path": "keysIn.js",
+          "sha256": "fba7db7b7420f0cc87b6636aa748e8c5f44e44cb5408fd33d1fa967b13f0039e"
+        },
+        {
+          "path": "_shortOut.js",
+          "sha256": "1b8768641ee4b76051240ec40b2bfe84e6f21682a71ce6f6f6972363f5b9c634"
+        },
+        {
+          "path": "_createAssigner.js",
+          "sha256": "6c238f9cd9247a342da1557fd97d501928cf7ded1d5b1d8646fd279bcc68b921"
+        },
+        {
+          "path": "_assignMergeValue.js",
+          "sha256": "9018dc11f6fe776f0d6ffa27ec31107552bb1f0ac4f7424db1e1011532bc2c14"
+        },
+        {
+          "path": "_baseFor.js",
+          "sha256": "171c18eca21431b2067189679bcfb5087463a64c071087b9511e9fcc67acadff"
+        },
+        {
+          "path": "_createBaseFor.js",
+          "sha256": "ce5bfd3ffa87788ae4edf6764fe3abc6cc75c18cddb71fb65d6de562fbebb511"
+        },
+        {
+          "path": "isPlainObject.js",
+          "sha256": "f790a22fd205b03f11f95fe0657c9244ff48e45363633fa110c3c5688177b192"
+        },
+        {
+          "path": "_safeGet.js",
+          "sha256": "5f9023f036ae9eef9a0196bac43db899fce05712ab4594efe195827eba585111"
+        },
+        {
+          "path": "_baseMergeDeep.js",
+          "sha256": "eec32b72db812c61e62ab0eed2cbc13cab9f75264aa6af9f5c8e7800cf50d3b1"
+        },
+        {
+          "path": "isArrayLikeObject.js",
+          "sha256": "76434e9c893ae3eaccb555792ea5754d42b5765efe5d360d78d2c4abda788ecb"
+        },
+        {
+          "path": "toPlainObject.js",
+          "sha256": "9345d80139f01e8768e0a134266ea2fc1196c22afc0f4022de66cb9a68b52a70"
+        },
+        {
+          "path": "_baseMerge.js",
+          "sha256": "6d8fada634d2384897e591daaea777b08f0397f953cab3642a541ef9b57c3dac"
+        },
+        {
+          "path": "identity.js",
+          "sha256": "152c43149691b31cb9bcdf1be4ba07a3963babbd096bcf6313182d3f2597f023"
+        },
+        {
+          "path": "_overRest.js",
+          "sha256": "2680f289bb332cf28f3a6413929e2afb46886fb1b747e9f6d33aa50c29ba68db"
+        },
+        {
+          "path": "_baseSetToString.js",
+          "sha256": "75d18e54921591874d3d54591087f458a423eed3d7042f237753fbca692d1d7f"
+        },
+        {
+          "path": "constant.js",
+          "sha256": "cce774605f469fe731a3aa932019b71df84fe6c47741b018a17e69c042f32ca3"
+        },
+        {
+          "path": "_setToString.js",
+          "sha256": "2a1ef073af2370f4bf3258d41bcc62f06ae23a41ae13543e5105946b2b07b03b"
+        },
+        {
+          "path": "_baseRest.js",
+          "sha256": "f796cefb2c34daf6ad295d2af58abc96ea34348676a23a88e11789bc45f844ea"
+        },
+        {
+          "path": "_apply.js",
+          "sha256": "b2e6d04f093a956feef2d826cba78dab35ea1e87e8fdf7f905120adbc0bd134e"
+        },
+        {
+          "path": "merge.js",
+          "sha256": "8004f9d4c737e69f5d871ff61e2966460c907036b7a514751d66f8f9b06572b1"
+        },
+        {
+          "path": "_isIterateeCall.js",
+          "sha256": "b03e71d858a91acdfc4b5b1c00b283e9e27ffd03567a06f6e6ce3c666c7b2f75"
+        },
+        {
+          "path": "stubArray.js",
+          "sha256": "fbb65461e7df8d72ba98065d2db95b3b781a66c58e396e2c76f8264d427b705e"
+        }
+      ]
+    }
+  ]
+}

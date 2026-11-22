@@ -178,7 +178,7 @@ func DeniedMaskedColumn(u *auth.User, sources []query.SourceRef, cols []string, 
 	for _, src := range sources {
 		var meta *metadata.Entity
 		if lookup != nil {
-			meta = lookup(src.Kind, src.Name)
+			meta = sourceMeta(src.Kind, src.Name, src.TablePart, lookup)
 		}
 		for field := range FieldDecisions(u, src.Kind, src.Name, meta) {
 			masked[strings.ToLower(strings.TrimSpace(field))] = true

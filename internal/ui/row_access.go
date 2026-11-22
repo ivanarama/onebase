@@ -98,7 +98,7 @@ func (s *Server) applyListFormFilter(r *http.Request, entity *metadata.Entity, p
 // умолчанию: номера условий filter через запятую.
 const listFormFilterOffParam = "lf_off"
 
-// listFormFilterMaxRows — сколько ссылок условие-запрос может вернуть. Больше —
+// listFormFilterMaxRows — сколько исходных строк условие-запрос может вернуть. Больше —
 // отбор закрывается целиком: длинный список параметров упирается в предел СУБД,
 // а молча обрезанный выглядел бы как «потерянные» записи.
 const listFormFilterMaxRows = 10000
@@ -182,13 +182,9 @@ func (s *Server) listFilterQueryPredicate(ctx context.Context, entity *metadata.
 		return storage.Predicate{}, false
 	}
 	closed := storage.Predicate{Field: "id", Op: "in", Value: []any{}}
-	ids, err := s.listFilterQueryIDs(ctx, cond.Query, user)
+	ids, err := s.listFilterQueryIDs(ctx, cond.Query, user, nil)
 	if err != nil {
 		slog.Warn("list form filter query failed", "error", err)
-		return closed, true
-	}
-	if len(ids) > listFormFilterMaxRows {
-		slog.Warn("list form filter query returned too many rows", "rows", len(ids))
 		return closed, true
 	}
 	values := make([]any, 0, len(ids))
@@ -200,17 +196,25 @@ func (s *Server) listFilterQueryPredicate(ctx context.Context, entity *metadata.
 
 // listFilterQueryIDs исполняет запрос условия с правами смотрящего (RLS его
 // источников действует, как у виджета) и возвращает идентификаторы из первой
-// колонки. Пустые и не-UUID значения пропускаются.
-func (s *Server) listFilterQueryIDs(ctx context.Context, text string, user *auth.User) ([]string, error) {
+// колонки. Лимит исходных строк проверяется до удаления повторов и пропуска
+// пустых и не-UUID значений. extra — параметры запроса
+// сверх служебных (choice_filter: значения из формы); служебные
+// &ТекущийПользователь и &ТекущийЛогин ими не перекрываются.
+func (s *Server) listFilterQueryIDs(ctx context.Context, text string, user *auth.User, extra map[string]any) ([]string, error) {
 	rowFilters, err := access.QueryRowFiltersWithContext(ctx, user, s.reg.Entities(), s.reg.Registers(), s.reg.InfoRegisters(), s.reg.AccountRegisters(), access.RuntimeContext(s.reg, s.store))
 	if err != nil {
 		return nil, err
 	}
+	params := make(map[string]any, len(extra)+2)
+	for name, value := range extra {
+		params[name] = value
+	}
+	params["ТекущийПользователь"], params["ТекущийЛогин"] = nil, nil
+	if user != nil {
+		params["ТекущийПользователь"], params["ТекущийЛогин"] = user.ID, user.Login
+	}
 	compiled, err := query.Compile(text, query.CompileOpts{
-		Params: map[string]any{
-			"ТекущийПользователь": user.ID,
-			"ТекущийЛогин":        user.Login,
-		},
+		Params:      params,
 		Entities:    s.reg.Entities(),
 		Registers:   s.reg.Registers(),
 		InfoRegs:    s.reg.InfoRegisters(),
@@ -228,9 +232,12 @@ func (s *Server) listFilterQueryIDs(ctx context.Context, text string, user *auth
 	if maskPlan.Denied != "" {
 		return nil, errors.New("нет доступа к полю запроса отбора")
 	}
-	rows, cols, err := query.Run(ctx, s.store, &compiled)
+	rows, cols, truncated, err := query.RunLimit(ctx, s.store, &compiled, listFormFilterMaxRows)
 	if err != nil {
 		return nil, err
+	}
+	if truncated {
+		return nil, fmt.Errorf("запрос отбора вернул больше %d строк", listFormFilterMaxRows)
 	}
 	if err := maskPlan.Apply(rows); err != nil {
 		return nil, err

@@ -5,13 +5,10 @@ package cli
 import (
 	"fmt"
 	"os"
-	"syscall"
-	"unsafe"
-)
 
-// fileTypeUnknown — GetFileType возвращает это значение, когда хэндл не привязан
-// к консоли, пайпу или файлу (например, нет консоли при запуске двойным кликом).
-const fileTypeUnknown = 0x0000 // FILE_TYPE_UNKNOWN
+	oblog "github.com/ivantit66/onebase/internal/logging"
+	"golang.org/x/sys/windows"
+)
 
 // showError сообщает об ошибке запуска. Текст всегда пишется в stderr. Модальное
 // окно MessageBox показывается ТОЛЬКО когда писать ошибку реально некуда —
@@ -24,28 +21,29 @@ func showError(msg string) {
 	if guiErrorsDisabled() || stderrIsUsable() {
 		return
 	}
-	dll := syscall.NewLazyDLL("user32.dll")
-	proc := dll.NewProc("MessageBoxW")
-	title, _ := syscall.UTF16PtrFromString("onebase — Ошибка запуска")
-	text, _ := syscall.UTF16PtrFromString(msg)
-	proc.Call(0,
-		uintptr(unsafe.Pointer(text)),
-		uintptr(unsafe.Pointer(title)),
-		0x10) // MB_ICONERROR
+	title, err := windows.UTF16PtrFromString("onebase — Ошибка запуска")
+	if err != nil {
+		oblog.Component("cli").Warn("cannot encode startup error title", "err", err)
+		return
+	}
+	text, err := windows.UTF16PtrFromString(msg)
+	if err != nil {
+		oblog.Component("cli").Warn("cannot encode startup error message", "err", err)
+		return
+	}
+	if _, err := windows.MessageBox(0, text, title, windows.MB_ICONERROR); err != nil {
+		oblog.Component("cli").Warn("cannot display startup error", "err", err)
+	}
 }
 
 // stderrIsUsable возвращает true, если stderr ведёт в консоль, пайп или файл —
 // то есть текст ошибки действительно куда-то попадёт. Для недоступного хэндла
 // (нет консоли) GetFileType вернёт FILE_TYPE_UNKNOWN.
 func stderrIsUsable() bool {
-	h := syscall.Handle(os.Stderr.Fd())
-	if h == 0 || h == syscall.InvalidHandle {
+	h := windows.Handle(os.Stderr.Fd())
+	if h == 0 || h == windows.InvalidHandle {
 		return false
 	}
-	dll := syscall.NewLazyDLL("kernel32.dll")
-	proc := dll.NewProc("GetFileType")
-	// GetFileType не выставляет осмысленный lastError для FILE_TYPE_UNKNOWN,
-	// поэтому решение принимаем по возвращаемому значению.
-	r, _, _ := proc.Call(uintptr(h))
-	return uint32(r) != fileTypeUnknown
+	kind, err := windows.GetFileType(h)
+	return err == nil && kind != windows.FILE_TYPE_UNKNOWN
 }

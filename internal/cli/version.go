@@ -42,6 +42,12 @@ var versionCmd = &cobra.Command{
 		// нескольких непроверенных вызовах печати.
 		var b strings.Builder
 		_, _ = fmt.Fprintf(&b, "onebase version %s\n", version.String())
+		if d := version.DistributionInfo(); d.Present() {
+			_, _ = fmt.Fprintf(&b, "сборка:      %s\n", strings.TrimSpace(d.Name+" "+d.Version))
+			if d.Supplier != "" {
+				_, _ = fmt.Fprintf(&b, "поставщик:   %s\n", d.Supplier)
+			}
+		}
 		if c := version.Commit(); c != "" {
 			line := "коммит:      " + c
 			if d := version.CommitDate(); d != "" {
