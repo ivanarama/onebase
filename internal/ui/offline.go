@@ -73,6 +73,9 @@ func NewOfflineServer(proj *project.Project, db *storage.DB) (*Server, *runtime.
 		messages:    NewMessageStore(),
 		globalDebug: debugger.NewGlobalDebugController(),
 	}
+	if appCfg.Limits != nil {
+		s.cfg.Limits.ExportMaxRows = appCfg.Limits.ExportMaxRows
+	}
 	// Запись справочников/документов из обработки (catWriter/docWriter →
 	// entityservice.Save) должна работать и в offline-режиме.
 	//
@@ -139,7 +142,7 @@ func (s *Server) RunProcessor(ctx context.Context, reg *runtime.Registry, procNa
 
 	paramsThis := &interpreter.MapThis{M: paramValues}
 	mc := runtime.NewMovementsCollector("processor", uuid.Nil)
-	dslVars, txState := s.buildDSLVarsWithMessagesTx(ctx, mc, &messages)
+	dslVars, txState := s.BuildJobDSLVars(ctx, mc, &messages)
 	defer rollbackDSLExecution(txState)
 	dslVars["Параметры"] = paramsThis
 	interpreter.InjectMaket(dslVars, proc.Layout)
