@@ -191,8 +191,15 @@ func TestTabShellSingleSSEAndEventForwarding(t *testing.T) {
 			t.Errorf("ui.js: отсутствует часть безопасной ретрансляции realtime-событий %q", want)
 		}
 	}
-	if got := strings.Count(src, "emitOnebaseEvent('onebase:' + msg.name, msg.data)"); got != 2 {
-		t.Errorf("ui.js должен поднимать onebase-событие в оболочке и во фрейме, найдено вызовов: %d", got)
+	// Shell delivery additionally carries source-snapshot metadata. Both paths
+	// must still dispatch the same public event name and unchanged detail.
+	for _, call := range []string{
+		"emitOnebaseEvent('onebase:' + msg.name, msg.data);",
+		"emitOnebaseEvent('onebase:' + msg.name, msg.data, msg.closeSource);",
+	} {
+		if got := strings.Count(src, call); got != 1 {
+			t.Errorf("ui.js должен поднимать onebase-событие в оболочке и во фрейме: %q, найдено %d", call, got)
+		}
 	}
 	if !strings.Contains(src, "if (!window.__obEmbedded) {\n    window.addEventListener('onebase:звонок.входящий'") {
 		t.Error("ui.js: встроенный тост входящего звонка должен оставаться только в оболочке")
