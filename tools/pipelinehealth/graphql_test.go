@@ -39,6 +39,9 @@ func TestMain(m *testing.M) {
 		}
 		http.DefaultTransport = restCLITestTransport{endpoint: endpoint, transport: http.DefaultTransport}
 		os.Args = []string{os.Args[0], "-transport", "rest", "-json"}
+		if os.Getenv("PIPELINEHEALTH_TEST_PR_IDENTITY") == "1" {
+			os.Args = append(os.Args, "-pr-identity")
+		}
 		if owner := os.Getenv("PIPELINEHEALTH_TEST_REST_OWNER"); owner != "" {
 			os.Args = append(os.Args, "-owner", owner)
 		}
@@ -146,6 +149,7 @@ func gqlTestComment(id string) map[string]any {
 		"fullDatabaseId": id,
 		"createdAt":      "2026-09-01T10:00:00Z",
 		"updatedAt":      "2026-09-01T10:00:00Z",
+		"lastEditedAt":   nil,
 		"author":         map[string]any{"login": "ivanarama"},
 		"body":           "comment " + id,
 	}

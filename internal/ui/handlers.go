@@ -2,7 +2,6 @@ package ui
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -693,15 +692,14 @@ func (s *Server) renderForbidden(w http.ResponseWriter, r *http.Request) {
 // (объект не загрузился, ошибка не из DSL) остаётся общей страницей: его
 // текст пользователю ни о чём не говорит и может раскрыть устройство базы.
 func (s *Server) renderReadHookDenied(w http.ResponseWriter, r *http.Request, denied error) {
-	var dslErr *interpreter.DSLError
-	if !errors.As(denied, &dslErr) || strings.TrimSpace(dslErr.UserMessage()) == "" {
+	message, explicit := interpreter.ExplicitExceptionMessage(denied)
+	if !explicit || strings.TrimSpace(message) == "" {
 		s.renderForbidden(w, r)
 		return
 	}
-	// Keep the error chain for localization, but omit diagnostic source data
-	// from the copy passed to the HTTP renderer. Logs retain the original error.
-	userErr := *dslErr
-	userErr.File, userErr.Line = "", 0
+	// Localize only the explicit message. Diagnostic wrapper text and causes
+	// remain in the original error and cannot reach the response.
+	userErr := interpreter.DSLError{Msg: message}
 	w.WriteHeader(http.StatusForbidden)
 	s.render(w, r, "page-forbidden", map[string]any{"Reason": s.errText(r, &userErr)})
 }
@@ -767,6 +765,11 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, dat
 		// Скрытая глобальная «Главная» (issue #304): убрать ведущую ссылку из
 		// панели разделов на всех страницах.
 		data["HideHome"] = s.hideGlobalHome()
+	}
+	if _, ok := data["MessagesMode"]; !ok {
+		if hp := s.messagesModeData(); hp != nil {
+			data["MessagesMode"] = hp
+		}
 	}
 	if _, ok := data["CollapsibleNav"]; !ok {
 		data["CollapsibleNav"] = s.store.GetNavCollapsible(r.Context())

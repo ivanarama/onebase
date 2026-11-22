@@ -247,3 +247,156 @@ func TestCLI(t *testing.T) {
 		})
 	}
 }
+
+// Bind the public CLI to a real synthetic merge checkout whose event base may
+// predate main commits already included by the PR. Never stub Git or the parser.
+func TestCLICheckoutMerge(t *testing.T) {
+	binary := filepath.Join(t.TempDir(), "prclosecheck")
+	if runtime.GOOS == "windows" {
+		binary += ".exe"
+	}
+	if out, err := exec.Command("go", "build", "-o", binary, ".").CombinedOutput(); err != nil { //nolint:gosec // fixed tool, test-owned binary
+		t.Fatalf("build: %v\n%s", err, out)
+	}
+	for _, tc := range []struct {
+		name, featureMessage, mergeMessage, body, mode, want string
+	}{
+		{name: "stale_event"},
+		{name: "fresh_event", mode: "fresh"},
+		{name: "declared_own", featureMessage: "fix: own change\n\nFixes #42", body: "Fixes #42"},
+		{name: "undeclared_own_commit", featureMessage: "fix: own change\n\nFixes #42", want: "#42"},
+		{name: "undeclared_secondary_feature_parent", mode: "side", want: "#44"},
+		{name: "undeclared_own_merge", mergeMessage: "merge: current main\n\nFixes #43", want: "#43"},
+		{name: "empty_selected_binding", mode: "empty", want: "complete lowercase commit SHA"},
+		{name: "malformed_binding", mode: "malformed", want: "complete lowercase commit SHA"},
+		{name: "different_local_HEAD", mode: "different", want: "local HEAD does not match"},
+		{name: "single_parent_checkout", mode: "single", want: "exactly two parents"},
+		{name: "octopus_checkout", mode: "octopus", want: "exactly two parents"},
+		{name: "reversed_checkout_parents", mode: "reverse", want: "second parent does not match"},
+		{name: "wrong_event_head", mode: "wronghead", want: "second parent does not match"},
+		{name: "unrelated_event_base", mode: "unrelated", want: "not a proven ancestor"},
+		{name: "shallow_checkout", mode: "shallow", want: "complete history required"},
+		{name: "strict_default_unchanged", mode: "default", want: "#999"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			git := func(args ...string) string {
+				t.Helper()
+				cmd := exec.Command("git", args...) //nolint:gosec // fixed executable, test-owned arguments
+				cmd.Dir = dir
+				cmd.Env = append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_AUTHOR_NAME=Test", "GIT_AUTHOR_EMAIL=test@example.com", "GIT_COMMITTER_NAME=Test", "GIT_COMMITTER_EMAIL=test@example.com")
+				out, err := cmd.CombinedOutput()
+				if err != nil {
+					t.Fatalf("git %v: %v\n%s", args, err, out)
+				}
+				return strings.TrimSpace(string(out))
+			}
+			git("init", "-b", "main")
+			git("commit", "--allow-empty", "-m", "base")
+			base := git("rev-parse", "HEAD")
+			git("checkout", "-b", "topic")
+			message := tc.featureMessage
+			if message == "" {
+				message = "feat: own change"
+			}
+			git("commit", "--allow-empty", "-m", message)
+			own := git("rev-parse", "HEAD")
+			var side string
+			if tc.mode == "side" {
+				git("checkout", "-b", "auxiliary", base)
+				git("commit", "--allow-empty", "-m", "fix: auxiliary change\n\nFixes #44")
+				side = git("rev-parse", "HEAD")
+				git("checkout", "topic")
+				git("merge", "--no-ff", "-m", "merge: auxiliary feature", "auxiliary")
+			}
+			git("checkout", "main")
+			git("commit", "--allow-empty", "-m", "fix: inherited main change\n\nFixes #999")
+			main := git("rev-parse", "HEAD")
+			git("checkout", "topic")
+			message = tc.mergeMessage
+			if message == "" {
+				message = "merge: current main"
+			}
+			git("merge", "--no-ff", "-m", message, "main")
+			head := git("rev-parse", "HEAD")
+			tree := git("rev-parse", "HEAD^{tree}")
+			checkout := git("commit-tree", tree, "-p", main, "-p", head, "-m", "synthetic checkout")
+			eventHead := head
+			switch tc.mode {
+			case "fresh":
+				base = main
+			case "single":
+				checkout = own
+			case "octopus":
+				checkout = git("commit-tree", tree, "-p", main, "-p", head, "-p", base, "-m", "octopus")
+			case "reverse":
+				checkout = git("commit-tree", tree, "-p", head, "-p", main, "-m", "reversed")
+			case "wronghead":
+				eventHead = own
+			case "unrelated":
+				base = git("commit-tree", tree, "-m", "unrelated root")
+			}
+			git("checkout", "--detach", checkout)
+			if tc.mode == "shallow" {
+				git("branch", "checked-merge", checkout)
+				clone := filepath.Join(t.TempDir(), "clone")
+				git("clone", "--depth=1", "--branch=checked-merge", "file://"+filepath.ToSlash(dir), clone)
+				dir = clone
+			}
+			binding := checkout
+			switch tc.mode {
+			case "empty":
+				binding = ""
+			case "malformed":
+				binding = "main"
+			case "different":
+				binding = main
+			}
+			pr := map[string]any{"body": tc.body, "base": map[string]any{"sha": base, "repo": map[string]any{"full_name": "ivanarama/onebase"}}, "head": map[string]any{"sha": eventHead}}
+			raw, err := json.Marshal(map[string]any{"pull_request": pr})
+			if err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(t.TempDir(), "event.json")
+			if err := os.WriteFile(path, raw, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			args := []string{"-event", path}
+			if tc.mode != "default" {
+				args = append(args, "-checkout-merge", binding)
+			}
+			cmd := exec.Command(binary, args...) //nolint:gosec // built CLI, test-owned paths and SHA values
+			cmd.Dir = dir
+			out, err := cmd.CombinedOutput()
+			if tc.want == "" {
+				if err != nil || !strings.Contains(string(out), "checked 2 PR commits") {
+					t.Fatalf("want exactly both own commits checked: %v\n%s", err, out)
+				}
+			} else if err == nil || !strings.Contains(string(out), tc.want) || !strings.Contains(string(out), "prclosecheck:") {
+				t.Fatalf("want failure containing %q, got %v\n%s", tc.want, err, out)
+			}
+			for _, pair := range [][2]string{{tc.featureMessage, own}, {tc.mergeMessage, head}} {
+				if pair[0] != "" && tc.want != "" && !strings.Contains(string(out), pair[1]) {
+					t.Fatalf("must identify actual own offending commit %s: %s", pair[1], out)
+				}
+			}
+			if side != "" && !strings.Contains(string(out), side) {
+				t.Fatalf("must scan the actual secondary feature-parent commit %s: %s", side, out)
+			}
+			if tc.mode == "default" {
+				if !strings.Contains(string(out), main) {
+					t.Fatalf("unchanged strict default must identify inherited main commit %s: %s", main, out)
+				}
+			} else if tc.want == "" || tc.featureMessage != "" || tc.mergeMessage != "" || side != "" {
+				if strings.Contains(string(out), "#999") {
+					t.Fatalf("inherited main closure was incorrectly scanned: %s", out)
+				}
+				for _, sha := range []string{base, main, head, checkout} {
+					if !strings.Contains(string(out), sha) {
+						t.Fatalf("selected range diagnostic must name %s: %s", sha, out)
+					}
+				}
+			}
+		})
+	}
+}

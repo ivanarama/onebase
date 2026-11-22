@@ -17,6 +17,8 @@ import (
 	"unicode/utf8"
 )
 
+// Keep root pages small: each node also loads label and comment connections.
+// Cursor pagination below still reads every PR, issue and nested comment.
 const pipelineHealthSnapshotQuery = `
 query PipelineHealthSnapshot(
   $owner: String!
@@ -27,9 +29,11 @@ query PipelineHealthSnapshot(
   $includeIssues: Boolean!
 ) {
   repository(owner: $owner, name: $name) {
+    id
+    nameWithOwner
     pullRequests(
       states: OPEN
-      first: 100
+      first: 20
       after: $pullCursor
       orderBy: {field: CREATED_AT, direction: ASC}
     ) @include(if: $includePulls) {
@@ -44,6 +48,11 @@ query PipelineHealthSnapshot(
         updatedAt
         state
         isDraft
+        baseRepository { id nameWithOwner }
+        headRepository { id nameWithOwner }
+        headRefName
+        baseRefOid
+        isCrossRepository
         headRefOid
         baseRefName
         labels(first: 100) {
@@ -57,6 +66,7 @@ query PipelineHealthSnapshot(
             fullDatabaseId
             createdAt
             updatedAt
+            lastEditedAt
             author { login }
             body
           }
@@ -70,7 +80,7 @@ query PipelineHealthSnapshot(
     }
     issues(
       states: OPEN
-      first: 100
+      first: 20
       after: $issueCursor
       orderBy: {field: CREATED_AT, direction: ASC}
     ) @include(if: $includeIssues) {
@@ -95,6 +105,7 @@ query PipelineHealthSnapshot(
             fullDatabaseId
             createdAt
             updatedAt
+            lastEditedAt
             author { login }
             body
           }
@@ -128,6 +139,7 @@ query PipelineHealthNodePage(
           fullDatabaseId
           createdAt
           updatedAt
+          lastEditedAt
           author { login }
           body
         }
@@ -146,6 +158,7 @@ query PipelineHealthNodePage(
           fullDatabaseId
           createdAt
           updatedAt
+          lastEditedAt
           author { login }
           body
         }
@@ -206,9 +219,11 @@ type pipelineGraphQLClient interface {
 // shell. GraphQL errors are parsed even when gh exits non-zero: partial data is
 // never accepted as a queue snapshot.
 type ghPipelineGraphQLClient struct {
-	executable string
-	timeout    time.Duration
-	run        pipelineGraphQLCommandRunner
+	sourceCost     *sourceGraphQLMeter
+	strictIdentity bool
+	executable     string
+	timeout        time.Duration
+	run            pipelineGraphQLCommandRunner
 }
 
 type pipelineGraphQLCommandRunner func(ctx context.Context, executable string, input []byte, stdout, stderr io.Writer) error
@@ -298,6 +313,13 @@ func newGHPipelineGraphQLClient() *ghPipelineGraphQLClient {
 }
 
 func (client *ghPipelineGraphQLClient) Query(query string, variables map[string]any, destination any) error {
+	if client.sourceCost != nil {
+		return client.queryWithSourceCost(query, variables, destination)
+	}
+	return client.queryUnmetered(query, variables, destination)
+}
+
+func (client *ghPipelineGraphQLClient) queryUnmetered(query string, variables map[string]any, destination any) error {
 	payload, err := json.Marshal(struct {
 		Query     string         `json:"query"`
 		Variables map[string]any `json:"variables"`
@@ -348,6 +370,16 @@ func (client *ghPipelineGraphQLClient) Query(query string, variables map[string]
 			return &pipelineGraphQLGatewayError{status: status, err: err}
 		}
 		return err
+	}
+	if client.strictIdentity {
+		if err := validateIdentityJSON(stdout.Bytes()); err != nil {
+			return err
+		}
+	}
+	if client.sourceCost != nil {
+		if err := validateSourceGraphQLEnvelope(stdout.Bytes()); err != nil {
+			return err
+		}
 	}
 	return decodePipelineGraphQLResponse(stdout.Bytes(), destination)
 }
@@ -492,6 +524,7 @@ type gqlComment struct {
 	FullDatabaseID string    `json:"fullDatabaseId"`
 	CreatedAt      string    `json:"createdAt"`
 	UpdatedAt      string    `json:"updatedAt"`
+	LastEditedAt   *string   `json:"lastEditedAt"`
 	Author         *gqlActor `json:"author"`
 	Body           string    `json:"body"`
 }
@@ -512,6 +545,14 @@ func (comment *gqlComment) UnmarshalJSON(data []byte) error {
 	} {
 		if err := decodeGQLRequired(fields, field.name, field.destination); err != nil {
 			return err
+		}
+	}
+	if err := decodeGQLNullable(fields, "lastEditedAt", &comment.LastEditedAt); err != nil {
+		return err
+	}
+	if comment.LastEditedAt != nil {
+		if _, err := time.Parse(time.RFC3339, *comment.LastEditedAt); err != nil {
+			return fmt.Errorf("invalid comment lastEditedAt: %w", err)
 		}
 	}
 	return decodeGQLNullable(fields, "author", &comment.Author)
@@ -564,21 +605,26 @@ func (connection *gqlPullCommitConnection) UnmarshalJSON(data []byte) error {
 }
 
 type gqlPull struct {
-	NodeID      string                  `json:"id"`
-	Number      int                     `json:"number"`
-	Title       string                  `json:"title"`
-	Body        string                  `json:"body"`
-	URL         string                  `json:"url"`
-	CreatedAt   string                  `json:"createdAt"`
-	UpdatedAt   string                  `json:"updatedAt"`
-	State       string                  `json:"state"`
-	Draft       bool                    `json:"isDraft"`
-	HeadRefOID  string                  `json:"headRefOid"`
-	BaseRefName string                  `json:"baseRefName"`
-	Labels      gqlLabelConnection      `json:"labels"`
-	Comments    gqlCommentConnection    `json:"comments"`
-	Commits     gqlPullCommitConnection `json:"commits"`
-	HeadParents []string                `json:"-"`
+	BaseRepository  *gqlRepositoryIdentity  `json:"baseRepository"`
+	HeadRepository  *gqlRepositoryIdentity  `json:"headRepository"`
+	HeadRefName     string                  `json:"headRefName"`
+	BaseRefOID      string                  `json:"baseRefOid"`
+	CrossRepository *bool                   `json:"isCrossRepository"`
+	NodeID          string                  `json:"id"`
+	Number          int                     `json:"number"`
+	Title           string                  `json:"title"`
+	Body            string                  `json:"body"`
+	URL             string                  `json:"url"`
+	CreatedAt       string                  `json:"createdAt"`
+	UpdatedAt       string                  `json:"updatedAt"`
+	State           string                  `json:"state"`
+	Draft           bool                    `json:"isDraft"`
+	HeadRefOID      string                  `json:"headRefOid"`
+	BaseRefName     string                  `json:"baseRefName"`
+	Labels          gqlLabelConnection      `json:"labels"`
+	Comments        gqlCommentConnection    `json:"comments"`
+	Commits         gqlPullCommitConnection `json:"commits"`
+	HeadParents     []string                `json:"-"`
 }
 
 func (pull *gqlPull) UnmarshalJSON(data []byte) error {
@@ -607,6 +653,22 @@ func (pull *gqlPull) UnmarshalJSON(data []byte) error {
 	} {
 		if err := decodeGQLRequired(fields, field.name, field.destination); err != nil {
 			return err
+		}
+	}
+	// Optional to retain the ordinary v1 reader and historical fixtures. The
+	// explicit identity view rejects absent or contradictory identity metadata.
+	for _, field := range []struct {
+		name        string
+		destination any
+	}{
+		{"baseRepository", &pull.BaseRepository}, {"headRepository", &pull.HeadRepository},
+		{"headRefName", &pull.HeadRefName}, {"baseRefOid", &pull.BaseRefOID},
+		{"isCrossRepository", &pull.CrossRepository},
+	} {
+		if raw, ok := fields[field.name]; ok {
+			if err := json.Unmarshal(raw, field.destination); err != nil {
+				return err
+			}
 		}
 	}
 	if pull.NodeID == "" || pull.Number <= 0 || pull.State != "OPEN" || pull.HeadRefOID == "" || pull.BaseRefName == "" {
@@ -679,8 +741,10 @@ func (connection *gqlIssueConnection) UnmarshalJSON(data []byte) error {
 
 type gqlSnapshotData struct {
 	Repository *struct {
-		PullRequests *gqlPullConnection  `json:"pullRequests"`
-		Issues       *gqlIssueConnection `json:"issues"`
+		ID            string              `json:"id"`
+		NameWithOwner string              `json:"nameWithOwner"`
+		PullRequests  *gqlPullConnection  `json:"pullRequests"`
+		Issues        *gqlIssueConnection `json:"issues"`
 	} `json:"repository"`
 }
 
@@ -991,6 +1055,7 @@ func loadGraphQLSnapshot(client pipelineGraphQLClient, repo, trustedOwner string
 	var rawPulls []gqlPull
 	var rawIssues []gqlIssue
 	pullTotal, issueTotal := -1, -1
+	var expectedBase *apiRepository
 	pullNodes, issueNodes := map[string]bool{}, map[string]bool{}
 
 	for !pullsDone || !issuesDone {
@@ -1010,6 +1075,12 @@ func loadGraphQLSnapshot(client pipelineGraphQLClient, repo, trustedOwner string
 			return nil, nil, fmt.Errorf("load GitHub queue snapshot: repository %s not found", repo)
 		}
 
+		observedBase := apiRepository{NodeID: data.Repository.ID, FullName: data.Repository.NameWithOwner}
+		if expectedBase == nil {
+			expectedBase = &observedBase
+		} else if *expectedBase != observedBase {
+			return nil, nil, &pipelineSnapshotChurn{"repository identity changed during pagination"}
+		}
 		if !pullsDone {
 			connection := data.Repository.PullRequests
 			if connection == nil {
@@ -1101,6 +1172,13 @@ func loadGraphQLSnapshot(client pipelineGraphQLClient, repo, trustedOwner string
 		pull, err := convertGQLPull(raw)
 		if err != nil {
 			return nil, nil, fmt.Errorf("PR #%d: %w", raw.Number, err)
+		}
+		pull.ExpectedBaseRepository = expectedBase
+		if needsFullCurrentReview(pull, trustedOwner) {
+			pull.FullCurrentReview, err = loadFullCurrentReview(client, pull, repo, trustedOwner)
+			if err != nil {
+				return nil, nil, err
+			}
 		}
 		pulls = append(pulls, pull)
 	}
@@ -1416,19 +1494,34 @@ func convertGQLPull(raw gqlPull) (apiPull, error) {
 		return apiPull{}, err
 	}
 	pull := apiPull{
-		Number:      raw.Number,
-		Title:       raw.Title,
-		Body:        raw.Body,
-		HTMLURL:     raw.URL,
-		CreatedAt:   raw.CreatedAt,
-		UpdatedAt:   raw.UpdatedAt,
-		State:       strings.ToLower(raw.State),
-		Draft:       raw.Draft,
-		Comments:    comments,
-		HeadParents: append([]string(nil), raw.HeadParents...),
+		NodeID:          raw.NodeID,
+		CrossRepository: raw.CrossRepository,
+		Number:          raw.Number,
+		Title:           raw.Title,
+		Body:            raw.Body,
+		HTMLURL:         raw.URL,
+		CreatedAt:       raw.CreatedAt,
+		UpdatedAt:       raw.UpdatedAt,
+		State:           strings.ToLower(raw.State),
+		Draft:           raw.Draft,
+		Comments:        comments,
+		HeadParents:     append([]string(nil), raw.HeadParents...),
 	}
 	pull.Head.SHA = raw.HeadRefOID
 	pull.Base.Ref = raw.BaseRefName
+	pull.Head.Ref = raw.HeadRefName
+	pull.Base.SHA = raw.BaseRefOID
+	if raw.BaseRepository != nil {
+		pull.Base.Repo = &apiRepository{NodeID: raw.BaseRepository.ID, FullName: raw.BaseRepository.NameWithOwner}
+	}
+	if raw.HeadRepository != nil {
+		pull.Head.Repo = &apiRepository{NodeID: raw.HeadRepository.ID, FullName: raw.HeadRepository.NameWithOwner}
+	}
+	// A GraphQL response must carry the explicit flag; do not infer a missing
+	// field as REST does. A missing flag closes only the inventory view.
+	if raw.CrossRepository == nil {
+		pull.Head.Repo = nil
+	}
 	for _, label := range raw.Labels.Nodes {
 		pull.Labels = append(pull.Labels, apiLabel(label))
 	}
@@ -1470,7 +1563,8 @@ func convertGQLComments(raw []gqlComment) ([]apiComment, error) {
 		}
 		comments = append(comments, apiComment{
 			ID: id, CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt,
-			User: apiUser{Login: login}, Body: item.Body,
+			lastEditedAt: item.LastEditedAt,
+			User:         apiUser{Login: login}, Body: item.Body,
 		})
 	}
 	return comments, nil

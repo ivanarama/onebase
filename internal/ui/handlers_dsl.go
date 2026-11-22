@@ -405,7 +405,8 @@ func (s *Server) buildDSLVarsWithMessagesTx(ctx context.Context, mc *runtime.Mov
 			if msgs != nil {
 				*msgs = append(*msgs, text)
 			}
-			s.messages.Push(userKey, text)
+			msg := s.messages.push(userKey, text, "info")
+			recordMessageReceipt(ctx, text, msg.ID)
 		}
 		return nil, nil
 	})

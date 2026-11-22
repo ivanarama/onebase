@@ -132,7 +132,7 @@ func ReadRecords(snapshot map[string]any, trusted string) ([]Record, []string, e
 		if !ok {
 			return nil, nil, fmt.Errorf("trusted comment body is unavailable")
 		}
-		if !strings.Contains(body, "pp:review-routing-") {
+		if !HasRecordPrefix(body) {
 			continue
 		}
 		if node["lastEditedAt"] != nil {
