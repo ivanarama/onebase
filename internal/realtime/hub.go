@@ -23,6 +23,9 @@ type Event struct {
 	Name   string
 	Data   any
 	System string
+	// CloseSource identifies the form-event snapshot that issued a close command.
+	// It is transport metadata, separate from configuration-controlled Data.
+	CloseSource string
 }
 
 // subscriberBuffer holds the full replay window. A slower live subscriber is
