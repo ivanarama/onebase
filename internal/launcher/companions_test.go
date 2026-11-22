@@ -27,13 +27,13 @@ func (f *fakeCompanionRuntime) rt() companionRuntime {
 			return os.ErrNotExist
 		},
 		running: func(path string) bool { return f.running[path] },
-		start: func(c Companion) error {
+		start: func(c Companion) (func() error, error) {
 			if f.startErr != nil {
-				return f.startErr
+				return nil, f.startErr
 			}
 			f.started = append(f.started, c.Key+":"+c.Path+":"+strings.Join(c.Args, ","))
 			f.running[c.Path] = true
-			return nil
+			return nil, nil
 		},
 	}
 }
@@ -53,7 +53,7 @@ func TestCompanionLauncherStart(t *testing.T) {
 	t.Run("ключ назван — запуск один раз", func(t *testing.T) {
 		f := &fakeCompanionRuntime{existing: map[string]bool{callistaPath: true}, running: map[string]bool{}}
 		l := newCompanionLauncher(f.rt())
-		if msgs := l.Start(list, []string{"CallISTA"}); len(msgs) != 0 {
+		if msgs, _ := l.Start(list, []string{"CallISTA"}); len(msgs) != 0 {
 			t.Fatalf("сообщения: %v", msgs)
 		}
 		// Перезагрузка оболочки в том же окне снова присылает ключ.
@@ -65,26 +65,26 @@ func TestCompanionLauncherStart(t *testing.T) {
 	t.Run("ключа нет — ничего", func(t *testing.T) {
 		f := &fakeCompanionRuntime{existing: map[string]bool{callistaPath: true}, running: map[string]bool{}}
 		l := newCompanionLauncher(f.rt())
-		if msgs := l.Start(list, nil); len(msgs) != 0 || len(f.started) != 0 {
+		if msgs, _ := l.Start(list, nil); len(msgs) != 0 || len(f.started) != 0 {
 			t.Fatalf("без ключей: запуски %v, сообщения %v", f.started, msgs)
 		}
 		// Ключ, которого нет в записи этого рабочего места, и ключ с
 		// посторонними символами — тоже ничего.
-		if msgs := l.Start(list, []string{"teams", "../../cmd"}); len(msgs) != 0 || len(f.started) != 0 {
+		if msgs, _ := l.Start(list, []string{"teams", "../../cmd"}); len(msgs) != 0 || len(f.started) != 0 {
 			t.Fatalf("чужой ключ: запуски %v, сообщения %v", f.started, msgs)
 		}
 	})
 	t.Run("уже запущена — не дублирует", func(t *testing.T) {
 		f := &fakeCompanionRuntime{existing: map[string]bool{callistaPath: true}, running: map[string]bool{callistaPath: true}}
 		l := newCompanionLauncher(f.rt())
-		if msgs := l.Start(list, []string{"callista"}); len(msgs) != 0 || len(f.started) != 0 {
+		if msgs, _ := l.Start(list, []string{"callista"}); len(msgs) != 0 || len(f.started) != 0 {
 			t.Fatalf("работающая программа: запуски %v, сообщения %v", f.started, msgs)
 		}
 	})
 	t.Run("неверный путь — сообщение, остальные запускаются", func(t *testing.T) {
 		f := &fakeCompanionRuntime{existing: map[string]bool{callistaPath: true}, running: map[string]bool{}}
 		l := newCompanionLauncher(f.rt())
-		msgs := l.Start(list, []string{"broken", "callista"})
+		msgs, _ := l.Start(list, []string{"broken", "callista"})
 		if len(msgs) != 1 || !strings.Contains(msgs[0], "broken") || !strings.Contains(msgs[0], "не найдена") {
 			t.Fatalf("сообщения: %v", msgs)
 		}
@@ -95,7 +95,7 @@ func TestCompanionLauncherStart(t *testing.T) {
 	t.Run("ошибка запуска — сообщение", func(t *testing.T) {
 		f := &fakeCompanionRuntime{existing: map[string]bool{callistaPath: true}, running: map[string]bool{}, startErr: errors.New("отказано в доступе")}
 		l := newCompanionLauncher(f.rt())
-		msgs := l.Start(list, []string{"callista"})
+		msgs, _ := l.Start(list, []string{"callista"})
 		if len(msgs) != 1 || !strings.Contains(msgs[0], "отказано в доступе") {
 			t.Fatalf("сообщения: %v", msgs)
 		}
@@ -181,13 +181,13 @@ func TestCompanionsStartIsSerializedBetweenWindows(t *testing.T) {
 	runtime := companionRuntime{
 		stat:    func(string) error { return nil },
 		running: func(string) bool { return running.Load() },
-		start: func(Companion) error {
+		start: func(Companion) (func() error, error) {
 			if started.Add(1) == 1 {
 				close(starting)
 				<-release
 			}
 			running.Store(true)
-			return nil
+			return nil, nil
 		},
 	}
 	secondRuntime := runtime

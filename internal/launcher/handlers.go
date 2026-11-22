@@ -154,11 +154,12 @@ const (
 // *Base и дополняет рантайм-полями (запущена ли база, URL, данные из app.yaml).
 type baseVM struct {
 	*Base
-	Running    bool
-	BaseURL    string
-	AppName    string
-	AppVersion string
-	LogoBase64 string
+	Running         bool
+	BaseURL         string
+	AppName         string
+	AppVersion      string
+	LogoBase64      string
+	CompanionStates []companionState
 }
 
 // baseStatuses возвращает статусы всех баз, обновляя протухшие записи кэша
@@ -293,6 +294,9 @@ func (h *handler) index(w http.ResponseWriter, r *http.Request) {
 	}
 	if selected == nil && len(vms) > 0 {
 		selected = vms[0]
+	}
+	if selected != nil {
+		selected.CompanionStates = h.store.companionStates(selected.ID)
 	}
 
 	flash, _ := h.takeFlash(r.URL.Query().Get("flash"))

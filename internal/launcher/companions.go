@@ -149,7 +149,7 @@ func splitCompanionArgs(s string) ([]string, error) {
 type companionRuntime struct {
 	stat    func(path string) error
 	running func(path string) bool
-	start   func(c Companion) error
+	start   func(c Companion) (wait func() error, err error)
 }
 
 var systemCompanionRuntime = companionRuntime{
@@ -164,7 +164,7 @@ var systemCompanionRuntime = companionRuntime{
 		return nil
 	},
 	running: companionProcessRunning,
-	start: func(c Companion) error {
+	start: func(c Companion) (func() error, error) {
 		cmd := exec.Command(c.Path, c.Args...) //nolint:gosec // G204: путь и аргументы — локальная настройка рабочего места в ibases.yaml; сервер передаёт только ключ
 		cmd.Dir = c.Dir
 		if cmd.Dir == "" {
@@ -175,11 +175,11 @@ var systemCompanionRuntime = companionRuntime{
 		}
 		detachCompanion(cmd)
 		if err := cmd.Start(); err != nil {
-			return err
+			return nil, err
 		}
-		// Программа живёт сама по себе: окно Предприятия её не ждёт и не
-		// завершает вместе с собой.
-		return cmd.Process.Release()
+		// Wait вызывается в фоне и освобождает дескриптор, не останавливая
+		// программу при закрытии окна.
+		return cmd.Wait, nil
 	},
 }
 
@@ -197,19 +197,21 @@ func newCompanionLauncher(rt companionRuntime) *companionLauncher {
 	return &companionLauncher{rt: rt, handled: map[string]bool{}}
 }
 
-// Start запускает программы записи для ключей, которые назвал сервер, и
-// возвращает сообщения об ошибках для показа пользователю. Ключ без программы
-// в записи — молча пропускается: программа нужна не на каждом рабочем месте.
-func (l *companionLauncher) Start(list []Companion, keys []string) []string {
+// Start запускает программы только по ключам текущего окна и возвращает
+// сообщения и результат каждой попытки для панели лаунчера.
+func (l *companionLauncher) Start(list []Companion, keys []string) ([]string, []companionLaunch) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	var msgs []string
+	var launches []companionLaunch
 	for _, raw := range keys {
 		key, ok := NormalizeCompanionKey(raw)
 		if !ok || l.handled[key] {
 			continue
 		}
 		l.handled[key] = true
+		launches = append(launches, companionLaunch{state: companionState{Key: key, Status: companionUndeclared}})
+		launch := &launches[len(launches)-1]
 		var c *Companion
 		for i := range list {
 			if list[i].Key == key {
@@ -221,21 +223,26 @@ func (l *companionLauncher) Start(list []Companion, keys []string) []string {
 			continue
 		}
 		if err := l.rt.stat(c.Path); err != nil {
+			launch.state.Status = companionUnavailable
 			msgs = append(msgs, fmt.Sprintf("Не удалось запустить «%s»: программа не найдена (%s). Проверьте путь в записи базы в лаунчере.", c.Key, c.Path))
 			continue
 		}
+		launch.state.Status = companionRunning
+		launch.state.Path = c.Path
 		if l.rt.running(c.Path) {
 			continue
 		}
-		if err := l.rt.start(*c); err != nil {
+		wait, err := l.rt.start(*c)
+		if err != nil {
+			launch.state.Status = companionFailed
+			launch.state.Path = ""
 			msgs = append(msgs, fmt.Sprintf("Не удалось запустить «%s» (%s): %v", c.Key, c.Path, err))
+			continue
 		}
+		launch.wait = wait
 	}
-	return msgs
+	return msgs, launches
 }
-
-// Protect the process check and launch across windows and launcher processes.
-var companionLaunchMu sync.Mutex
 
 // startBaseCompanions — запуск для записи базы baseID: программы манифеста
 // комплекта (companions.yaml рядом с лаунчером), поверх них — пути станции из
@@ -256,24 +263,22 @@ func startBaseCompanions(l *companionLauncher, store *Store, baseID string, keys
 		}
 	}
 	var record []Companion
+	var recordID string
 	if store != nil && baseID != "" {
 		if b, err := store.Get(baseID); err == nil {
 			record = b.Companions
+			recordID = b.ID
 		}
 	}
 	if store != nil {
-		companionLaunchMu.Lock()
-		defer companionLaunchMu.Unlock()
-		lock, err := acquireStoreFileLock(store.path + ".companions.lock")
+		unlock, err := lockCompanions(store)
 		if err != nil {
 			respondLog().Warn("не удалось получить блокировку запуска сопутствующих программ", "err", err)
 			return append(msgs, "Не удалось проверить запуск сопутствующих программ.")
 		}
-		defer func() {
-			if err := lock.Unlock(); err != nil {
-				respondLog().Warn("не удалось снять блокировку запуска сопутствующих программ", "err", err)
-			}
-		}()
+		defer unlock()
 	}
-	return append(msgs, l.Start(mergeCompanions(manifest, record), keys)...)
+	messages, launches := l.Start(mergeCompanions(manifest, record), keys)
+	recordCompanionLaunches(store, recordID, launches)
+	return append(msgs, messages...)
 }

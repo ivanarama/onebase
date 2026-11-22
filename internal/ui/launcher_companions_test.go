@@ -25,17 +25,24 @@ import (
 // ошибка в ней, запрос без пользователя — пустой список. Путь: маршрут
 // зарегистрирован Mount.
 func TestLauncherCompanionsEndpoint(t *testing.T) {
+	const keyByUser = `Функция СопутствующиеПрограммыПользователя() Экспорт
+  Если ИмяПользователя() = "oper" Тогда
+    Возврат "callista";
+  КонецЕсли;
+  Возврат "";
+КонецФункции`
 	cases := []struct {
 		name, module string
-		user         bool
+		login        string
 		want         string
 	}{
-		{"массив ключей", "Функция СопутствующиеПрограммыПользователя() Экспорт\n  Ключи = Новый Массив;\n  Ключи.Добавить(\"Callista\");\n  Ключи.Добавить(\"callista\");\n  Ключи.Добавить(\"C:\\Windows\\calc.exe\");\n  Возврат Ключи;\nКонецФункции\n", true, "callista"},
-		{"строка через запятую", "Функция СопутствующиеПрограммыПользователя() Экспорт\n  Возврат \"callista, notes\";\nКонецФункции\n", true, "callista,notes"},
-		{"ключ по пользователю", "Функция СопутствующиеПрограммыПользователя() Экспорт\n  Если ИмяПользователя() = \"oper\" Тогда\n    Возврат \"callista\";\n  КонецЕсли;\n  Возврат \"\";\nКонецФункции\n", true, "callista"},
-		{"нет функции", "Процедура Другое() Экспорт\nКонецПроцедуры\n", true, ""},
-		{"ошибка в функции", "Функция СопутствующиеПрограммыПользователя() Экспорт\n  ВызватьИсключение \"нет данных\";\nКонецФункции\n", true, ""},
-		{"без пользователя", "Функция СопутствующиеПрограммыПользователя() Экспорт\n  Возврат \"callista\";\nКонецФункции\n", false, ""},
+		{"массив ключей", "Функция СопутствующиеПрограммыПользователя() Экспорт\n  Ключи = Новый Массив;\n  Ключи.Добавить(\"Callista\");\n  Ключи.Добавить(\"callista\");\n  Ключи.Добавить(\"C:\\Windows\\calc.exe\");\n  Возврат Ключи;\nКонецФункции\n", "oper", "callista"},
+		{"строка через запятую", "Функция СопутствующиеПрограммыПользователя() Экспорт\n  Возврат \"callista, notes\";\nКонецФункции\n", "oper", "callista,notes"},
+		{"ключ по пользователю", keyByUser, "oper", "callista"},
+		{"вторая учётка без ключа", keyByUser, "viewer", ""},
+		{"нет функции", "Процедура Другое() Экспорт\nКонецПроцедуры\n", "oper", ""},
+		{"ошибка в функции", "Функция СопутствующиеПрограммыПользователя() Экспорт\n  ВызватьИсключение \"нет данных\";\nКонецФункции\n", "oper", ""},
+		{"без пользователя", "Функция СопутствующиеПрограммыПользователя() Экспорт\n  Возврат \"callista\";\nКонецФункции\n", "", ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -55,10 +62,10 @@ func TestLauncherCompanionsEndpoint(t *testing.T) {
 			defer srv.BeginShutdown()
 			router := chi.NewRouter()
 			router.Group(func(r chi.Router) {
-				if tc.user {
+				if tc.login != "" {
 					r.Use(func(next http.Handler) http.Handler {
 						return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-							next.ServeHTTP(w, r.WithContext(auth.ContextWithUser(r.Context(), &auth.User{ID: "u-oper", Login: "oper"})))
+							next.ServeHTTP(w, r.WithContext(auth.ContextWithUser(r.Context(), &auth.User{ID: "u-" + tc.login, Login: tc.login})))
 						})
 					})
 				}

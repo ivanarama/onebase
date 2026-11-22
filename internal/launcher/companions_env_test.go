@@ -5,7 +5,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 )
 
 // Дочерний процесс для TestCompanionEnvReachesRealProcess: записывает
@@ -27,7 +26,7 @@ func TestCompanionEnvReachesRealProcess(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := filepath.Join(t.TempDir(), "env.txt")
-	err = systemCompanionRuntime.start(Companion{
+	wait, err := systemCompanionRuntime.start(Companion{
 		Key:  "callista",
 		Path: self,
 		Args: []string{"-test.run=^TestHelperCompanionEnvChild$"},
@@ -39,12 +38,12 @@ func TestCompanionEnvReachesRealProcess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var got []byte
-	for i := 0; i < 100; i++ {
-		if got, err = os.ReadFile(out); err == nil && len(got) > 0 {
-			break
-		}
-		time.Sleep(100 * time.Millisecond)
+	if err := wait(); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
 	}
 	url, path, _ := strings.Cut(string(got), "|")
 	if url != "https://cc.icecorp.ru:8445" {
