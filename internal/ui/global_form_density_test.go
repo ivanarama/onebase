@@ -27,7 +27,8 @@ func TestGlobalFormDensityThroughHTTPKeepsOperatorsAndOwnDensity(t *testing.T) {
 			own.Forms[0].EntityName = own.Name
 			own.Forms[0].Density = "compact"
 			s, _ := newSubmitTestServer(t, []*metadata.Entity{auto, doc, managed, own})
-			s.reg.LoadProcessors([]*processor.Processor{{Name: "AutoProcessor", Params: []processor.Param{{Name: "Caption", Type: "string"}}}})
+			autoProcessor := &processor.Processor{Name: "AutoProcessor", Params: []processor.Param{{Name: "Caption", Type: "string"}}}
+			s.reg.LoadProcessors([]*processor.Processor{autoProcessor})
 			s.cfg.UIEnhancements = true
 			s.cfg.UIRoles = []string{"OTK"}
 			s.cfg.UIExceptRoles = []string{"Operator", "Messenger"}
@@ -47,7 +48,18 @@ func TestGlobalFormDensityThroughHTTPKeepsOperatorsAndOwnDensity(t *testing.T) {
 				t.Run(profile.name, func(t *testing.T) {
 					u := &auth.User{ID: "density-test-user", Login: "density-test-user", IsAdmin: profile.admin}
 					for _, name := range profile.roles {
-						u.Roles = append(u.Roles, &auth.Role{Name: name, Permissions: auth.Permission{Catalogs: map[string][]string{auto.Name: {"read", "write"}, managed.Name: {"read", "write"}, own.Name: {"read", "write"}}, Documents: map[string][]string{doc.Name: {"read", "write"}}}})
+						u.Roles = append(u.Roles, &auth.Role{
+							Name: name,
+							Permissions: auth.Permission{
+								Catalogs: map[string][]string{
+									auto.Name:    {"read", "write"},
+									managed.Name: {"read", "write"},
+									own.Name:     {"read", "write"},
+								},
+								Documents:  map[string][]string{doc.Name: {"read", "write"}},
+								Processors: map[string][]string{autoProcessor.Name: {"run"}},
+							},
+						})
 					}
 					for _, page := range []struct {
 						path           string
