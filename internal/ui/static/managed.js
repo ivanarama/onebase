@@ -1363,6 +1363,19 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
 		throw new Error('invalid form-event response');
 	  }
       responseKnown = true;
+      if (res.ok && data.ok && !data.error && !data.cancel && data.csv) {
+        var bytes = Uint8Array.from(atob(data.csv.content), function (character) { return character.charCodeAt(0); });
+        var objectURL = window.URL.createObjectURL(new Blob([bytes], {type: 'text/csv;charset=utf-8'}));
+        var link = document.createElement('a');
+        link.href = objectURL;
+        link.download = data.csv.name;
+        document.body.appendChild(link);
+        try { link.click(); }
+        finally {
+          link.remove();
+          setTimeout(function () { window.URL.revokeObjectURL(objectURL); }, 1000);
+        }
+      }
       if (!res.ok || !data.ok || data.error || data.cancel) data.revealed = [];
       if (window.obApplyConcealed) window.obApplyConcealed(data.revealed, form);
 	  // Even parseable JSON on non-2xx may come from an intermediary after the
