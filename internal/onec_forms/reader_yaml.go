@@ -160,12 +160,17 @@ func yamlElementToIR(el yamlElement) *IRElement {
 		Choice:     el.Choice,
 		Width:      el.Width,
 		Height:     el.Height,
-		Hint:       el.Hint,
-		Mask:       el.Mask,
-		Events:     el.Events,
-		Props:      el.Props,
-		Visible:    true,
-		Enabled:    true,
+
+		TabularProgress:  el.TabularProgress,
+		TabularPlainRows: el.TabularPlainRows,
+		TabularCompact:   el.TabularCompact,
+
+		Hint:    el.Hint,
+		Mask:    el.Mask,
+		Events:  el.Events,
+		Props:   el.Props,
+		Visible: true,
+		Enabled: true,
 	}
 	for _, c := range el.Children {
 		out.Children = append(out.Children, yamlElementToIR(c))

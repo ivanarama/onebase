@@ -73,10 +73,12 @@ const (
 	// переменная ТекущаяСтраница; сервер принимает только страницу этого же
 	// набора.
 	FormEventOnPageChange FormEventType = "ПриСменеСтраницы" // OnCurrentPageChange
+	FormEventDrilldown    FormEventType = "ОбработкаРасшифровки"
 )
 
 var knownFormEventTypes = map[FormEventType]bool{
-	FormEventOnOpen: true, FormEventOnReadAtServer: true,
+	FormEventDrilldown: true,
+	FormEventOnOpen:    true, FormEventOnReadAtServer: true,
 	FormEventBeforeWrite: true, FormEventOnWrite: true, FormEventAfterWrite: true,
 	FormEventBeforeClose: true, FormEventOnClose: true, FormEventOnActivate: true,
 	FormEventItemChoice: true, FormEventStartChoice: true, FormEventOnChange: true,
@@ -128,6 +130,8 @@ func IsKnownFormEventType(event FormEventType) bool {
 // FormElementType represents types of form elements
 type FormElementType string
 
+const FormElementSpreadsheet FormElementType = "ПолеТабличногоДокумента"
+
 const (
 	FormElementField      FormElementType = "ПолеВвода"      // InputField
 	FormElementLabel      FormElementType = "Надпись"        // Label
@@ -158,7 +162,8 @@ const (
 // Держится рядом с константами FormElementType: добавляя новый вид, впиши его
 // сюда, иначе configcheck пометит его как неизвестный (см. CheckFormElementKind).
 var knownFormElementTypes = map[FormElementType]bool{
-	FormElementField: true, FormElementLabel: true, FormElementButton: true,
+	FormElementSpreadsheet: true,
+	FormElementField:       true, FormElementLabel: true, FormElementButton: true,
 	FormElementTable: true, FormElementGroupBox: true, FormElementPage: true,
 	FormElementPages: true, FormElementCheckbox: true, FormElementSwitch: true,
 	FormElementInputList: true, FormElementDatePicker: true, FormElementFormField: true,
@@ -211,8 +216,13 @@ type FormElement struct {
 	Required  bool                     `yaml:"required,omitempty"`
 	Handlers  map[FormEventType]string `yaml:"events,omitempty"`
 	Props     map[string]any           `yaml:"props,omitempty"`
-	Children  []*FormElement           `yaml:"children,omitempty"`
-	Columns   []*FormElement           `yaml:"columns,omitempty"` // план 183: колонки ТЧ с отбором
+
+	TabularProgress  string `yaml:"tabular_progress,omitempty"` // result attribute for a processor button
+	TabularPlainRows bool   `yaml:"tabular_plain_rows,omitempty"`
+	TabularCompact   bool   `yaml:"tabular_compact,omitempty"`
+
+	Children []*FormElement `yaml:"children,omitempty"`
+	Columns  []*FormElement `yaml:"columns,omitempty"` // план 183: колонки ТЧ с отбором
 
 	// Поля, добавленные планом 37. Все опциональны; YAML-загрузчик
 	// заполняет их при чтении managed-формы, конвертер 1С использует

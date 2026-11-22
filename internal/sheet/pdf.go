@@ -167,6 +167,10 @@ func registerFonts(pdf *fpdf.Fpdf) {
 // computeColWidths из printform/pdf.go (там работали строки "%"/"mm"; здесь —
 // числовые px из модели). colCount — число колонок (0-based maxCol+1).
 func (d *Document) resolveColumnWidthsMM(usable float64, colCount int) []float64 {
+	return d.columnWidthsMM(usable, colCount, true)
+}
+
+func (d *Document) columnWidthsMM(usable float64, colCount int, clamp bool) []float64 {
 	widths := make([]float64, colCount)
 	used := 0.0
 	free := make([]int, 0, colCount)
@@ -205,7 +209,7 @@ func (d *Document) resolveColumnWidthsMM(usable float64, colCount int) []float64
 	for _, w := range widths {
 		sum += w
 	}
-	if sum > usable && sum > 0 {
+	if clamp && sum > usable && sum > 0 {
 		scale := usable / sum
 		for c := range widths {
 			widths[c] *= scale
@@ -275,7 +279,35 @@ func (d *Document) PDF(opts PDFOptions) ([]byte, error) {
 
 	maxRow, maxCol := d.ContentBounds()
 	colCount := maxCol + 1
-	colWidths := d.resolveColumnWidthsMM(usable, colCount)
+	colWidths := d.columnWidthsMM(usable, colCount, !d.AutoScale)
+	printScale := 1.0
+	if d.AutoScale {
+		naturalWidth := 0.0
+		for _, width := range colWidths {
+			naturalWidth += width
+		}
+		if naturalWidth > usable && usable > 0 {
+			printScale = usable / naturalWidth
+		}
+		// Coordinates/font sizes/heights/borders stay in the original layout.
+		// The page transformation scales them together; pagination uses the same
+		// virtual page height. There is no integer font rounding or rewrapping
+		// into the already compressed physical column widths.
+		pageBottom = m.Top + (pageH-m.Top-m.Bottom)/printScale
+	}
+	beginScale := func() {
+		if printScale < 1 {
+			pdf.TransformBegin()
+			pdf.TransformScaleXY(100*printScale, m.Left, m.Top)
+		}
+	}
+	addPage := func() {
+		if printScale < 1 {
+			pdf.TransformEnd()
+		}
+		pdf.AddPage()
+		beginScale()
+	}
 
 	// Левый край колонки (мм) для быстрого позиционирования.
 	colX := make([]float64, colCount+1)
@@ -321,12 +353,13 @@ func (d *Document) PDF(opts PDFOptions) ([]byte, error) {
 		return hy
 	}
 
+	beginScale()
 	for row := 0; row <= maxRow; row++ {
 		rh := rowHeights[row]
 
 		// Явный разрыв страницы перед строкой.
 		if breakBefore[row] && row > 0 {
-			pdf.AddPage()
+			addPage()
 			y = m.Top
 			if d.RepeatHeader && d.HeaderArea != nil {
 				y = drawHeader()
@@ -335,7 +368,7 @@ func (d *Document) PDF(opts PDFOptions) ([]byte, error) {
 
 		// Авто-разрыв: строка не помещается на текущей странице.
 		if y+rh > pageBottom && row > 0 {
-			pdf.AddPage()
+			addPage()
 			y = m.Top
 			if d.RepeatHeader && d.HeaderArea != nil {
 				y = drawHeader()
@@ -346,6 +379,9 @@ func (d *Document) PDF(opts PDFOptions) ([]byte, error) {
 		y += rh
 	}
 
+	if printScale < 1 {
+		pdf.TransformEnd()
+	}
 	var w byteWriter
 	if err := pdf.Output(&w); err != nil {
 		return nil, err
@@ -379,7 +415,7 @@ func (d *Document) computeRowHeightsMM(pdf *fpdf.Fpdf, maxRow int, colWidths []f
 		h := minRowMM
 		for col := 0; col < len(colWidths); col++ {
 			cell := d.GetCell(row, col)
-			if cell == nil || (cell.Text == "" && cell.RichHTML == "") {
+			if cell == nil || (cell.DisplayText() == "" && cell.RichHTML == "") {
 				continue
 			}
 			// Ширина для переноса с учётом colspan.
@@ -414,7 +450,7 @@ func (a *Area) computeAreaRowHeightsMM(pdf *fpdf.Fpdf, colWidths []float64) []fl
 		h := minRowMM
 		for c := 0; c < cols && c < len(colWidths); c++ {
 			cell := a.Cells[fmt.Sprintf("%d,%d", r, c)]
-			if cell == nil || cell.Text == "" {
+			if cell == nil || (cell.DisplayText() == "" && cell.RichHTML == "") {
 				continue
 			}
 			cw := colWidths[c]
@@ -445,8 +481,11 @@ func cellHeightMM(pdf *fpdf.Fpdf, cell *Cell, cw float64) float64 {
 		avail = cw
 	}
 	family, style := resolveFont(cell.FontFamily, cell.Bold, cell.Italic)
+	if cell.Underline {
+		style += "U"
+	}
 	pdf.SetFont(family, style, fs)
-	lines := len(wrapText(pdf, cell.Text, avail))
+	lines := len(wrapText(pdf, cell.DisplayText(), avail))
 	return float64(lines)*lineH + 2*cellPadMM
 }
 
@@ -534,8 +573,11 @@ func drawCell(pdf *fpdf.Fpdf, cell *Cell, x, y, w, h float64) {
 	}
 
 	// Текст.
-	if cell.Text != "" {
+	if text := cell.DisplayText(); text != "" {
 		family, style := resolveFont(cell.FontFamily, cell.Bold, cell.Italic)
+		if cell.Underline {
+			style += "U"
+		}
 		fs := fontSizeOr(cell)
 		pdf.SetFont(family, style, fs)
 		if cell.TextColor != "" {
@@ -551,7 +593,7 @@ func drawCell(pdf *fpdf.Fpdf, cell *Cell, x, y, w, h float64) {
 		if avail <= 0 {
 			avail = w
 		}
-		lines := wrapText(pdf, cell.Text, avail)
+		lines := wrapText(pdf, text, avail)
 		textH := float64(len(lines)) * lineH
 
 		// Вертикальное выравнивание блока текста.
@@ -659,6 +701,8 @@ func drawCellBorder(pdf *fpdf.Fpdf, cell *Cell, x, y, w, h float64) {
 		return
 	case "thick":
 		lw = 0.5
+	case "hair":
+		lw = 0.25 * ptToMM
 	case "thin", "all":
 		lw = 0.2
 	default:
@@ -699,6 +743,8 @@ func sideWidthMM(side string) float64 {
 		return 0.4
 	case "thick":
 		return 0.6
+	case "hair":
+		return 0.25 * ptToMM
 	default: // thin
 		return 0.2
 	}

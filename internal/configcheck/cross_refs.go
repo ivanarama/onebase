@@ -288,6 +288,11 @@ func CheckCrossRefs(proj *project.Project, roles []*auth.Role) []Issue {
 
 	// Печатные формы v2 (макеты .layout.yaml) — валидация binding.
 	for _, lf := range proj.LayoutForms {
+		// Report/processor layouts are filled by their module, not entity binding.
+		if lf != nil && lf.Layout != nil && lf.Layout.Binding == nil &&
+			(reports.has(lf.Layout.Document) || processors.has(lf.Layout.Document)) {
+			continue
+		}
 		issues = append(issues, checkLayoutForm(lf, docs, cats, entityByName)...)
 	}
 
