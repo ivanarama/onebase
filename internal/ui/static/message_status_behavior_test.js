@@ -17,9 +17,9 @@ const src = managed.slice(start, end);
 
 function load() {
   const flashed = [];
-  const ctx = { flashed, flash(text, kind) { flashed.push([text, kind]); } };
+  const ctx = { flashed, flash(text, kind, id) { flashed.push([text, kind, id]); } };
   vm.createContext(ctx);
-  vm.runInContext(src + '\nthis.obMessageParts = obMessageParts; this.obFlashMessage = obFlashMessage;', ctx);
+  vm.runInContext(src + '\nthis.obMessageParts = obMessageParts; this.obFlashMessage = obFlashMessage; this.obFlashMessages = obFlashMessages;', ctx);
   return ctx;
 }
 
@@ -28,7 +28,7 @@ const mark = (n, text) => '\u2063'.repeat(n) + '\u2064' + text;
 
 test('статус разбирается, Важное и ОченьВажное — ошибка', () => {
   const ctx = load();
-  ['обычное', mark(1, 'инфо'), mark(2, 'внимание'), mark(3, 'важное'), mark(4, 'очень')].forEach(ctx.obFlashMessage);
+  ['обычное', mark(1, 'инфо'), mark(2, 'внимание'), mark(3, 'важное'), mark(4, 'очень')].forEach((message) => ctx.obFlashMessage(message));
   assert.deepEqual(ctx.flashed.map((x) => [x[0], x[1]]), [
     ['обычное', 'ok'], ['инфо', 'ok'], ['внимание', 'ok'], ['важное', 'err'], ['очень', 'err'],
   ]);
@@ -39,4 +39,10 @@ test('текст без завершителя метки не трогаетс�
   const raw = '\u2063\u2063текст';
   assert.deepEqual({ ...ctx.obMessageParts(raw) }, { text: raw, error: false });
   assert.deepEqual({ ...ctx.obMessageParts(null) }, { text: '', error: false });
+});
+
+test('status keeps the server receipt ID for each message', () => {
+  const ctx = load();
+  ctx.obFlashMessages({messages: [mark(3, 'important'), 'regular'], messageIDs: ['one', 'two']});
+  assert.deepEqual(ctx.flashed, [['important', 'err', 'one'], ['regular', 'ok', 'two']]);
 });

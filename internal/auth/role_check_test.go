@@ -71,10 +71,9 @@ func TestRoleAllows(t *testing.T) {
 		t.Error("Allows с неизвестным видом должен вернуть ошибку")
 	}
 
-	// Обработки без секции processors — opt-in: разрешены все (обратная
-	// совместимость PermissionHas).
-	if ok, err := role.Allows("обработка", "Любая", "run"); err != nil || !ok {
-		t.Errorf("роль без секции processors должна разрешать любую обработку: ok=%v err=%v", ok, err)
+	// Обработки требуют явного разрешения, как остальные виды объектов.
+	if ok, err := role.Allows("обработка", "Любая", "run"); err != nil || ok {
+		t.Errorf("роль без секции processors должна запрещать обработку: ok=%v err=%v", ok, err)
 	}
 	// Явно пустая (non-nil) секция processors — запрещает все обработки.
 	restricted := &Role{Permissions: Permission{Processors: map[string][]string{}}}
