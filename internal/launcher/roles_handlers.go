@@ -159,6 +159,17 @@ func (h *handler) cfgAdminRoles(w http.ResponseWriter, r *http.Request) {
 	    </div>
 	    <div style="font-size:11px;color:#666;margin-bottom:6px">Права на объекты:</div>`)
 	sb.WriteString(roleMatrixHTML(data, staleRolePerms(roles, data)))
+	fmt.Fprintf(&sb, `<details style="margin-top:10px"><summary>%s</summary><p>%s</p><pre>read:
+  field: Филиал
+  op: in
+  value:
+    user_card:
+      catalog: Сотрудник
+      account_field: Учётка
+      table_part: Филиалы
+      column: Филиал</pre></details>`,
+		escHTML(tr(resolveLang(r), "Строковый доступ по карточке сотрудника")),
+		escHTML(tr(resolveLang(r), "Настройте источник в YAML роли. Для набора из ТЧ используйте in/not_in; пустой или невалидный набор закрывает политику целиком. Матрица прав сохраняет эту настройку. Карточки и их филиалы должен изменять только администратор.")))
 	sb.WriteString(`
 	    <div style="margin-top:12px;display:flex;gap:8px;align-items:center">`)
 	if data != nil && data.Error == "" {

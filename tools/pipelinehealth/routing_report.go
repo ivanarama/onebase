@@ -61,8 +61,8 @@ type routingContext struct {
 	complete            bool
 }
 
-func prepareRouting(prs []apiPull, repository, trusted, contract, fixture string, limit int64) *routingContext {
-	context := &routingContext{snapshots: loadRoutingSnapshots(newGHPipelineGraphQLClient(), prs, repository, fixture),
+func prepareRoutingWithClient(client pipelineGraphQLClient, prs []apiPull, repository, trusted, contract, fixture string, limit int64) *routingContext {
+	context := &routingContext{snapshots: loadRoutingSnapshots(client, prs, repository, fixture),
 		repository: repository, trusted: trusted, maxAttempts: limit, complete: true}
 	context.readers, context.readersErr = reviewrouting.ConsumerTrees(filepath.Dir(filepath.Dir(contract)))
 	positiveReaders, positiveErr := reviewrouting.PositiveConsumerTrees(filepath.Dir(filepath.Dir(contract)))
@@ -155,7 +155,7 @@ func routingFootprint(snapshot map[string]any, trusted string) bool {
 			return true
 		}
 		if node["__typename"] == "IssueComment" && routingObject(node["author"])["login"] == trusted &&
-			(strings.Contains(routingText(node["body"]), "pp:review-routing-") || node["lastEditedAt"] != nil) {
+			(reviewrouting.HasRecordPrefix(routingText(node["body"])) || node["lastEditedAt"] != nil) {
 			return true
 		}
 	}
@@ -164,7 +164,7 @@ func routingFootprint(snapshot map[string]any, trusted string) bool {
 
 func legacyRoutingHistory(comments []apiComment, trusted string) bool {
 	for _, comment := range comments {
-		if strings.Contains(comment.Body, "<!-- pp:review-routing-") &&
+		if reviewrouting.HasRecordPrefix(comment.Body) &&
 			(comment.User.Login == trusted || strings.TrimSpace(comment.User.Login) == "") {
 			return true
 		}
