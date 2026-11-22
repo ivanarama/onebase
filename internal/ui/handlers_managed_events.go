@@ -150,7 +150,7 @@ func (s *Server) saveManagedObject(r *http.Request, entity *metadata.Entity, for
 		}
 	}
 	if !isNew {
-		if _, err := s.protectMaskedFieldsOnWrite(r.Context(), entity, obj.ID, obj.Fields); err != nil {
+		if _, err := s.protectMaskedFieldsOnWrite(r.Context(), entity, obj.ID, obj.Fields, true); err != nil {
 			return nil, 0, err
 		}
 		dec, err := s.rowDecision(r.Context(), entity, "write")
@@ -961,7 +961,7 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 			// Discard still runs trusted BeforeClose code, which may call
 			// Object.Write. Restore fields hidden/masked from this user before the
 			// handler so forged browser values cannot ride that authorized write.
-			if _, protectErr := s.protectMaskedFieldsOnWrite(dslCtx, entity, obj.ID, obj.Fields); protectErr != nil {
+			if _, protectErr := s.protectMaskedFieldsOnWrite(dslCtx, entity, obj.ID, obj.Fields, true); protectErr != nil {
 				w.WriteHeader(http.StatusInternalServerError)
 				respondJSON(enc, formEventResponse{Error: s.errText(r, protectErr)})
 				return

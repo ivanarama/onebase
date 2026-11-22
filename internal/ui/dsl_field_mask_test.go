@@ -54,6 +54,10 @@ func dslMaskEntities() (*metadata.Entity, *metadata.Entity) {
 // полевой политики (план 88E).
 func TestDSL_CatalogObjectGetIsMasked(t *testing.T) {
 	client, order := dslMaskEntities()
+	// Даже если условие формы объекта выполнено, загруженный объект DSL
+	// продолжает использовать обычные правила маски и записи.
+	client.Fields[1].PII = true
+	client.Fields[1].PIIOpenWhen = `Наименование = "Иванов"`
 	s, ctx := newSubmitTestServer(t, []*metadata.Entity{client, order})
 	id := uuid.New()
 	if err := s.store.Upsert(ctx, "Клиент", id, map[string]any{

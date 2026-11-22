@@ -458,7 +458,7 @@ func (s *Server) sourceMeta(kind, name string) *metadata.Entity {
 // обязан учесть, что в переданной карте после этого лежит РЕАЛЬНОЕ значение: для
 // DSL-объекта это тот же набор, который читает модуль, и без снятия признака
 // «присвоено» защита записи сама стала бы каналом раскрытия.
-func (s *Server) protectMaskedFieldsOnWrite(ctx context.Context, entity *metadata.Entity, id uuid.UUID, fields map[string]any) ([]string, error) {
+func (s *Server) protectMaskedFieldsOnWrite(ctx context.Context, entity *metadata.Entity, id uuid.UUID, fields map[string]any, objectForm bool) ([]string, error) {
 	dec := s.fieldDecisions(ctx, entity)
 	if len(dec) == 0 || fields == nil {
 		return nil, nil
@@ -467,9 +467,10 @@ func (s *Server) protectMaskedFieldsOnWrite(ctx context.Context, entity *metadat
 	if err != nil {
 		return nil, err
 	}
-	// pii_open_when по СОХРАНЁННОЙ записи: открытое поле пользователь видел
-	// целиком, и его правка записывается.
-	dec = s.openPIIByRecord(entity, dec, row)
+	// Условие раскрытия действует в форме объекта и вычисляется по сохранённой записи.
+	if objectForm {
+		dec = s.openPIIByRecord(entity, dec, row)
+	}
 	var restored []string
 	for field, decision := range dec {
 		key, ok := maskCIKey(fields, field)

@@ -230,7 +230,7 @@ func (f *formObjectThis) write() error {
 	hookState := f.hookXDTOState()
 	if !isNew {
 		originalFields := cloneRecord(f.obj.Fields)
-		restored, err := f.srv.protectMaskedFieldsOnWrite(ctx, f.entity, f.obj.ID, f.obj.Fields)
+		restored, err := f.srv.protectMaskedFieldsOnWrite(ctx, f.entity, f.obj.ID, f.obj.Fields, true)
 		if err != nil {
 			return err
 		}
