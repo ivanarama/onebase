@@ -61,8 +61,8 @@ type routingContext struct {
 	complete            bool
 }
 
-func prepareRouting(prs []apiPull, repository, trusted, contract, fixture string, limit int64) *routingContext {
-	context := &routingContext{snapshots: loadRoutingSnapshots(newGHPipelineGraphQLClient(), prs, repository, fixture),
+func prepareRoutingWithClient(client pipelineGraphQLClient, prs []apiPull, repository, trusted, contract, fixture string, limit int64) *routingContext {
+	context := &routingContext{snapshots: loadRoutingSnapshots(client, prs, repository, fixture),
 		repository: repository, trusted: trusted, maxAttempts: limit, complete: true}
 	context.readers, context.readersErr = reviewrouting.ConsumerTrees(filepath.Dir(filepath.Dir(contract)))
 	positiveReaders, positiveErr := reviewrouting.PositiveConsumerTrees(filepath.Dir(filepath.Dir(contract)))
