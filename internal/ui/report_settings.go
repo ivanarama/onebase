@@ -189,6 +189,15 @@ func effectiveComposition(rep *reportpkg.Report, s *reportpkg.UserReportSettings
 		return nil
 	}
 	if s == nil || s.Composition == nil {
+		// Preserve the legacy shared read-only pointer for existing reports.
+		// New mutable rule slices must be detached from the trusted registry.
+		for _, m := range base.Measures {
+			if len(m.Calculations) > 0 {
+				out := *base
+				out.Measures = cloneTrustedMeasures(base.Measures)
+				return &out
+			}
+		}
 		return base
 	}
 	return mergeUserComposition(base, s.Composition)
@@ -290,11 +299,10 @@ func mergeUserComposition(base, u *reportpkg.Composition) *reportpkg.Composition
 		// должен переводить плоский отчёт в режим СКД.
 		return nil
 	}
-	// Доверенные показатели и поля по имени (регистронезависимо, как DSL).
-	// Expr всегда наследуется только отсюда; презентационные поля служат
+	// Доверенные показатели индексируются по полю, а повторяющиеся поля
+	// однозначно связываются также по агрегату. Scope/Expr берутся только отсюда; презентационные поля служат
 	// дефолтами, если пользовательский JSON пришёл частичным.
-	trustedExpr := make(map[string]string, len(base.Measures))
-	trustedMeasure := make(map[string]reportpkg.Measure, len(base.Measures))
+	trustedMeasures := make(map[string][]reportpkg.Measure, len(base.Measures))
 	canonicalField := make(map[string]string)
 	addCanonical := func(field string) {
 		if field != "" {
@@ -309,8 +317,7 @@ func mergeUserComposition(base, u *reportpkg.Composition) *reportpkg.Composition
 	}
 	for _, m := range base.Measures {
 		key := strings.ToLower(m.Field)
-		trustedExpr[key] = m.Expr
-		trustedMeasure[key] = m
+		trustedMeasures[key] = append(trustedMeasures[key], m)
 		addCanonical(m.Field)
 	}
 	for _, sk := range base.Sort {
@@ -318,6 +325,7 @@ func mergeUserComposition(base, u *reportpkg.Composition) *reportpkg.Composition
 	}
 
 	out := *base // копия: Conditional/Chart/DetailLink/DetailEntity — из доверенной.
+	out.Measures = cloneTrustedMeasures(base.Measures)
 
 	// Презентационные коллекции берём из пользовательского ввода, но только если
 	// поле реально присутствовало. Старый UI отправлял частичный JSON и тем самым
@@ -348,28 +356,45 @@ func mergeUserComposition(base, u *reportpkg.Composition) *reportpkg.Composition
 	out.Appearance = safeAppearance(u.Appearance) // презентация: безопасно из пользователя
 
 	// Показатели: презентация — из пользовательского ввода, Expr — только из
-	// доверенной компоновки (по совпадению Field), иначе обнуляем.
+	// доверенной компоновки по однозначной identity, иначе сохраняем trusted набор.
 	if len(u.Measures) > 0 && !invalidEmptyComposition {
 		measures := make([]reportpkg.Measure, 0, len(u.Measures))
+		unambiguous := true
 		for _, m := range u.Measures {
-			baseMeasure := trustedMeasure[strings.ToLower(m.Field)]
+			candidates := trustedMeasures[strings.ToLower(m.Field)]
+			baseMeasure, ok := trustedPresetMeasure(candidates, m)
+			if !ok {
+				unambiguous = false
+				break
+			}
+			agg := firstNonEmpty(m.Agg, baseMeasure.Agg)
+			if len(candidates) > 1 || len(baseMeasure.Calculations) > 0 {
+				agg = baseMeasure.Agg
+			}
 			field := m.Field
 			if baseMeasure.Field != "" {
 				field = baseMeasure.Field
 			}
 			safe := reportpkg.Measure{
 				Field:  field,
-				Agg:    firstNonEmpty(m.Agg, baseMeasure.Agg),
+				Agg:    agg,
 				Title:  firstNonEmpty(m.Title, baseMeasure.Title),
 				Align:  firstNonEmpty(m.Align, baseMeasure.Align),
 				Format: firstNonEmpty(m.Format, baseMeasure.Format),
 				// Expr НЕ из пользовательского ввода: берём доверенное значение
 				// по имени поля; если показателя нет в доверенной — Expr пуст.
-				Expr: trustedExpr[strings.ToLower(m.Field)],
+				Expr:         baseMeasure.Expr,
+				Scope:        append([]string(nil), baseMeasure.Scope...),
+				Calculations: append([]reportpkg.MeasureCalculation(nil), baseMeasure.Calculations...),
 			}
 			measures = append(measures, safe)
 		}
-		out.Measures = measures
+		// A preset without a unique resource identity cannot rewrite the
+		// trusted list. In particular Field+Agg duplicates never pick the last
+		// Scope/Expr by accident, even when the client selects only one entry.
+		if unambiguous {
+			out.Measures = measures
+		}
 	}
 	return &out
 }
@@ -680,4 +705,43 @@ func (s *Server) reportSettingsReset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.Redirect(w, r, reportFormURLWithPreset(rep.Name, standardReportPresetID), http.StatusSeeOther)
+}
+
+func trustedPresetMeasure(candidates []reportpkg.Measure, requested reportpkg.Measure) (reportpkg.Measure, bool) {
+	if len(candidates) == 0 {
+		return reportpkg.Measure{}, true
+	}
+	if len(candidates) == 1 {
+		return candidates[0], true
+	}
+	aggKey := func(agg string) string {
+		if agg == "" {
+			return "sum"
+		}
+		return strings.ToLower(strings.TrimSpace(agg))
+	}
+	var found reportpkg.Measure
+	count := 0
+	for _, candidate := range candidates {
+		if aggKey(candidate.Agg) == aggKey(requested.Agg) {
+			found = candidate
+			count++
+		}
+	}
+	return found, count == 1
+}
+func cloneTrustedMeasures(in []reportpkg.Measure) []reportpkg.Measure {
+	if in == nil {
+		return nil
+	}
+	out := append([]reportpkg.Measure(nil), in...)
+	for i := range out {
+		if in[i].Calculations != nil {
+			out[i].Calculations = append([]reportpkg.MeasureCalculation{}, in[i].Calculations...)
+		}
+		if in[i].Scope != nil {
+			out[i].Scope = append([]string{}, in[i].Scope...)
+		}
+	}
+	return out
 }
