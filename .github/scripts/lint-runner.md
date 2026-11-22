@@ -4,7 +4,7 @@ Use a separate source export/checkout without generated files. Artifacts and
 caches must live outside it. This tool always executes a new full analysis;
 there is no cache of accepted lint results or resume mode.
 
-Install Go 1.26.10 and golangci-lint 2.11.4 **built with Go 1.26.10**. Inspect
+Install Go 1.26.11 and golangci-lint 2.11.4 **built with Go 1.26.11**. Inspect
 inputs before admitting their exact fingerprint for the intended operation:
 
 ```sh
@@ -25,7 +25,7 @@ resource profile and artifact location.
 The `--go` bootstrap locates the pinned installation once. Every analysis stage
 then executes its checked effective Go directly with `GOTOOLCHAIN=local` and
 that installation's `bin` first in the child PATH. This also binds go/packages'
-own lookup without redispatch through a versioned `go1.26.10` in PATH. Bootstrap,
+own lookup without redispatch through a versioned `go1.26.11` in PATH. Bootstrap,
 effective and analysis paths/hashes are fingerprinted and checked again after
 each stage. `--go` must select a launcher named `go` (`go.exe` on Windows).
 
@@ -72,7 +72,7 @@ from the actual linter, then checks that the runner finds its `unused` finding.
 It also proves that a genuine older bootstrap can redispatch through a
 package-hiding versioned Go proxy, while the runner still finds the package
 using the same inspected fingerprint. The bootstrap must be a real older
-Go 1.26 installation. CI obtains Go 1.26.3, builds the linter with Go 1.26.10
+Go 1.26 installation. CI obtains Go 1.26.3, builds the linter with Go 1.26.11
 and runs all cases. These small fixture
 checks do not substitute for full lint of OneBase. The unreadable-directory
 case runs under POSIX permissions in Linux CI; Windows reports that case as skipped.
