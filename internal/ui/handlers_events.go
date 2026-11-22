@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/ivantit66/onebase/internal/auth"
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/realtime"
@@ -23,9 +24,10 @@ import (
 // второй — с повторным ПриОткрытии, — а закрыть копию в фоновой вкладке
 // команде было нечем, и пользователь работал в незакрытой форме.
 type hubNotifier struct {
-	hub   *realtime.Hub
-	shell string
-	login string
+	hub         *realtime.Hub
+	shell       string
+	login       string
+	closeSource string
 }
 
 func (n hubNotifier) Publish(target, name string, data any) {
@@ -35,6 +37,9 @@ func (n hubNotifier) Publish(target, name string, data any) {
 	ev := realtime.Event{Name: name, Data: data}
 	if n.shell != "" && n.login != "" && target == n.login && shellScopedEvent(name) {
 		ev.Shell = n.shell
+	}
+	if name == "ui.закрытьФорму" {
+		ev.CloseSource = n.closeSource
 	}
 	n.hub.Publish(target, ev)
 }
@@ -46,10 +51,24 @@ func shellScopedEvent(name string) bool {
 	return name == "ui.открытьФорму" || name == "ui.закрытьФорму"
 }
 
+// Only this request's opaque snapshot token can identify its originating form.
+// A missing/invalid token keeps ordinary dirty confirmation in every recipient.
+func (s *Server) bindFormCloseSource(vars map[string]any, r *http.Request) {
+	source := r.Header.Get("X-OneBase-Form-Close-Source")
+	if _, err := uuid.Parse(source); err != nil {
+		return
+	}
+	n := s.notifier(r.Context())
+	n.closeSource = source
+	for key, value := range interpreter.NewNotifyFunctions(n) {
+		vars[key] = value
+	}
+}
+
 // notifier возвращает издателя уведомлений для инжекции в DSL-переменные.
 // Адрес оболочки и логин берутся из контекста запроса: у фоновых заданий их
 // нет, и уведомление уходит всем сеансам, как раньше.
-func (s *Server) notifier(ctx context.Context) interpreter.Notifier {
+func (s *Server) notifier(ctx context.Context) hubNotifier {
 	n := hubNotifier{hub: s.hub, shell: shellIDFrom(ctx)}
 	if u := auth.UserFromContext(ctx); u != nil {
 		n.login = u.Login
@@ -170,7 +189,11 @@ func (s *Server) eventsStream(w http.ResponseWriter, r *http.Request) {
 			// Кадр — дефолтное message-событие с {name,data} в JSON: клиент один
 			// раз парсит и ретранслирует в window CustomEvent('onebase:<name>'),
 			// поэтому имена событий не нужно согласовывать с сервером заранее.
-			frame, err := json.Marshal(map[string]any{"name": ev.Name, "data": ev.Data, "system": ev.System})
+			payload := map[string]any{"name": ev.Name, "data": ev.Data, "system": ev.System}
+			if ev.CloseSource != "" {
+				payload["closeSource"] = ev.CloseSource
+			}
+			frame, err := json.Marshal(payload)
 			if err != nil {
 				continue
 			}

@@ -28,6 +28,9 @@ type Event struct {
 	// подписчик без адреса (страница со старым ui.js) получает его, как
 	// раньше. В кадр SSE не попадает.
 	Shell string
+	// CloseSource identifies the form-event snapshot that issued a close command.
+	// It is transport metadata, separate from configuration-controlled Data.
+	CloseSource string
 }
 
 // subscriberBuffer holds the full replay window. A slower live subscriber is
