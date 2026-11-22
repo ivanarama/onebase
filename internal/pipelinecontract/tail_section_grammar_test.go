@@ -33,22 +33,20 @@ func modeledClassifyTailLine(line string) modeledTailSectionLine {
 	if strings.TrimSpace(line) == "—" {
 		return tailLineDash
 	}
-	indented := line != strings.TrimLeft(line, " \t")
-	body := strings.TrimLeft(line, " \t")
+	if strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t") {
+		return tailLineContinuation
+	}
 
 	// Пункт: номер, точка, пробел и class-token в квадратных скобках.
 	digits := 0
-	for digits < len(body) && body[digits] >= '0' && body[digits] <= '9' {
+	for digits < len(line) && line[digits] >= '0' && line[digits] <= '9' {
 		digits++
 	}
-	if digits > 0 && strings.HasPrefix(body[digits:], ". ") {
-		rest := body[digits+2:]
+	if digits > 0 && strings.HasPrefix(line[digits:], ". ") {
+		rest := line[digits+2:]
 		if strings.HasPrefix(rest, "[заявка] ") || strings.HasPrefix(rest, "[выброс] ") {
 			return tailLineItem
 		}
-	}
-	if indented {
-		return tailLineContinuation
 	}
 	return tailLineForeign
 }
@@ -114,6 +112,10 @@ func TestTailSectionGrammarFailsClosedOnForeignLine(t *testing.T) {
 	}
 	if !modeledTailSectionValid(indented, 1) {
 		t.Error("продолжение пункта с отступом отвергнуто")
+	}
+	nested := "    2. [выброс] пример текста списка"
+	if modeledClassifyTailLine(nested) != tailLineContinuation || modeledTailSectionValid([]string{nested}, 0) {
+		t.Error("вложенная строка принята за самостоятельный пункт")
 	}
 
 	// Продолжение до первого пункта — не продолжение, а чужой текст.
