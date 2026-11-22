@@ -748,6 +748,8 @@ type FormModule struct {
 	// по реквизиту связанной записи. Значение — литерал или @ТекущийПользователь
 	// (идентификатор учётной записи смотрящего).
 	ListFilter []FormListCondition `yaml:"filter,omitempty"`
+	// ListProcessors adds links to runnable processors in the list toolbar.
+	ListProcessors []FormListProcessor `yaml:"list_processors,omitempty"`
 
 	// RefCardButtonAdminOnly — кнопку «Открыть карточку» видит только
 	// администратор (#1876). Оператору справочники вести не положено, и лупа у
@@ -795,6 +797,11 @@ type FormModule struct {
 	// чтобы новые id из редактора не пересекались с диапазоном 1С.
 	idCounter int        `yaml:"-"`
 	idMu      sync.Mutex `yaml:"-"`
+}
+
+type FormListProcessor struct {
+	Name  string            `yaml:"name"`
+	Title map[string]string `yaml:"title,omitempty"`
 }
 
 // FormListCondition — одно условие постоянного отбора формы списка.
