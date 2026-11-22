@@ -3124,6 +3124,7 @@ const tplReport = `
     <label style="display:flex;gap:6px;align-items:center;padding-bottom:8px"><input type="checkbox" name="__preset_default" value="1" {{if .ActivePreset}}{{if .ActivePreset.IsDefault}}checked{{end}}{{end}}> {{t $.Lang "по умолчанию"}}</label>
   </div>
   <input type="hidden" name="__settings" id="rs-json"{{if .ReportSettingsJSON}} value="{{.ReportSettingsJSON}}" data-base="{{.ReportSettingsJSON}}"{{else if .UserSettings}} value="{{.UserSettings.JSON}}" data-base="{{.UserSettings.JSON}}"{{end}}>
+{{if or .ReportHasComposition .Report.Composition}}
   <table style="width:auto;margin-bottom:12px">
     <thead><tr>
       <th style="text-align:left">{{t $.Lang "Поле"}}</th>
@@ -3138,12 +3139,15 @@ const tplReport = `
     </tr>{{end}}
     </tbody>
   </table>
-  <div class="rs-filters" style="margin:12px 0">
+{{end}}
+  <script type="application/json" id="report-result-filter-fields">{{jsJSON .ReportFilterFields}}</script>
+ <script src="/static/report-result-filter.js" defer></script>
+ <div class="rs-filters" style="margin:12px 0">
     <div style="font-weight:600;margin-bottom:6px">{{t $.Lang "Отбор"}}</div>
     <div id="rs-filter-rows">
       {{if .UserSettings}}{{range .UserSettings.Filters}}{{$f := .}}
       <div class="rs-filter-row" style="display:flex;gap:6px;margin-bottom:6px;align-items:center">
-        <select class="rs-f-field">{{range $.ReportCols}}<option value="{{.}}" {{if eq . $f.Field}}selected{{end}}>{{.}}</option>{{end}}</select>
+        <select class="rs-f-field">{{range $.ReportFilterFields}}<option value="{{.Name}}" {{if eq (lower .Name) (lower $f.Field)}}selected{{end}}>{{.Name}}</option>{{end}}</select>
         <select class="rs-f-op">
           <option value="eq" {{if eq $f.Op "eq"}}selected{{end}}>=</option>
           <option value="ne" {{if eq $f.Op "ne"}}selected{{end}}>≠</option>
@@ -3152,17 +3156,19 @@ const tplReport = `
           <option value="lt" {{if eq $f.Op "lt"}}selected{{end}}>&lt;</option>
           <option value="le" {{if eq $f.Op "le"}}selected{{end}}>≤</option>
           <option value="contains" {{if eq $f.Op "contains"}}selected{{end}}>{{t $.Lang "содержит"}}</option>
+ <option value="is_null" {{if eq $f.Op "is_null"}}selected{{end}}>NULL</option>
+ <option value="not_null" {{if eq $f.Op "not_null"}}selected{{end}}>≠ NULL</option>
         </select>
         <input class="rs-f-value" type="text" value="{{$f.Value}}">
         <button type="button" class="btn btn-sm" data-ob-remove-row=".rs-filter-row">×</button>
       </div>
       {{end}}{{end}}
     </div>
-    <button type="button" class="btn btn-sm" data-ob-rs-add-filter>+ {{t $.Lang "Отбор"}}</button>
+    <button type="button" class="btn btn-sm" data-ob-rs-add-filter {{if not .ReportFilterFields}}disabled{{end}}>+ {{t $.Lang "Отбор"}}</button>
   </div>
   <template id="rs-filter-tpl">
     <div class="rs-filter-row" style="display:flex;gap:6px;margin-bottom:6px;align-items:center">
-      <select class="rs-f-field">{{range .ReportCols}}<option value="{{.}}">{{.}}</option>{{end}}</select>
+      <select class="rs-f-field">{{range .ReportFilterFields}}<option value="{{.Name}}">{{.Name}}</option>{{end}}</select>
       <select class="rs-f-op">
         <option value="eq">=</option>
         <option value="ne">≠</option>
@@ -3171,11 +3177,13 @@ const tplReport = `
         <option value="lt">&lt;</option>
         <option value="le">≤</option>
         <option value="contains">{{t $.Lang "содержит"}}</option>
+ <option value="is_null">NULL</option><option value="not_null">≠ NULL</option>
       </select>
       <input class="rs-f-value" type="text" value="">
       <button type="button" class="btn btn-sm" data-ob-remove-row=".rs-filter-row">×</button>
     </div>
   </template>
+{{if or .ReportHasComposition .Report.Composition}}
   <div class="rs-appearance" style="margin:12px 0;display:flex;gap:16px;align-items:center;flex-wrap:wrap">
     <label>{{t $.Lang "Линии сетки"}}
       <select id="rs-lines" style="margin-left:6px">
@@ -3190,6 +3198,7 @@ const tplReport = `
       <input type="number" id="rs-collapse-to" min="0" step="1" placeholder="—" title="{{t $.Lang "Пусто — отчёт открывается развёрнутым; 0 — видны только группы верхнего уровня"}}" style="margin-left:6px;width:64px">
     </label>
   </div>
+{{end}}
   <div style="display:flex;gap:8px;flex-wrap:wrap">
     <button class="btn btn-primary" type="submit">{{t $.Lang "Применить"}}</button>
     <button class="btn" type="submit" name="__preset_action" value="save" formaction="/ui/report/{{lower .Report.Name}}/settings/save">{{t $.Lang "Сохранить вариант"}}</button>

@@ -419,17 +419,25 @@ func (s *Server) dslQueryGuard(ctx context.Context, res query.Result, rows []map
 // sourceMeta resolves the metadata of a query source object (entity/register/
 // inforeg/account register); nil if unknown.
 func (s *Server) sourceMeta(kind, name string) *metadata.Entity {
-	if e := s.reg.GetEntity(name); e != nil {
-		return e
-	}
-	if r := s.reg.GetRegister(name); r != nil {
-		return storage.RegisterPredicateEntity(r)
-	}
-	if ir := s.reg.GetInfoRegister(name); ir != nil {
-		return storage.InfoRegisterPredicateEntity(ir)
-	}
-	if ar := s.reg.GetAccountRegister(name); ar != nil {
-		return storage.AccountRegisterPredicateEntity(ar)
+	switch strings.ToLower(kind) {
+	case "catalog", "document":
+		if e := s.reg.GetEntity(name); e != nil && strings.EqualFold(string(e.Kind), kind) {
+			return e
+		}
+	case "register":
+		if s.reg.GetRegister(name) != nil && s.reg.GetAccountRegister(name) != nil {
+			return nil // Ambiguous source metadata must not remove a report mask.
+		}
+		if r := s.reg.GetRegister(name); r != nil {
+			return storage.RegisterPredicateEntity(r)
+		}
+		if ar := s.reg.GetAccountRegister(name); ar != nil {
+			return storage.AccountRegisterPredicateEntity(ar)
+		}
+	case "inforeg":
+		if ir := s.reg.GetInfoRegister(name); ir != nil {
+			return storage.InfoRegisterPredicateEntity(ir)
+		}
 	}
 	return nil
 }

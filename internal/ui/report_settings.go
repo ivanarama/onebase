@@ -15,6 +15,7 @@ import (
 
 	"github.com/ivantit66/onebase/internal/auth"
 	reportpkg "github.com/ivantit66/onebase/internal/report"
+	"github.com/ivantit66/onebase/internal/report/resultfilter"
 	"github.com/ivantit66/onebase/internal/storage"
 )
 
@@ -33,23 +34,9 @@ var errSettingsTooLarge = errors.New("настройки отчёта слишк
 var errReportPresetNameRequired = errors.New("укажите название варианта отчёта")
 
 type reportSettingsRequest struct {
+	Err            error
 	Settings       *reportpkg.UserReportSettings
 	ActivePresetID string
-}
-
-// readReportSettings разбирает пользовательские настройки из поля __settings
-// запроса (FormValue читает и POST-форму, и GET-query). Пустое или повреждённое
-// значение → nil (поведение отчёта по умолчанию).
-func readReportSettings(r *http.Request) *reportpkg.UserReportSettings {
-	raw := r.FormValue("__settings")
-	if raw == "" {
-		return nil
-	}
-	s, err := reportpkg.ParseUserSettings(raw)
-	if err != nil {
-		return nil
-	}
-	return s
 }
 
 // reportSettingsWithRequestVariant накладывает явный __variant из запроса поверх
@@ -86,49 +73,35 @@ func requestFormValue(r *http.Request, name string) (string, bool) {
 }
 
 func (s *Server) reportSettingsForRequest(r *http.Request, rep *reportpkg.Report) reportSettingsRequest {
+	raw := r.FormValue("__settings")
+	parsed, err := resultfilter.ParseSettings(raw)
+	if err != nil {
+		return reportSettingsRequest{Err: err}
+	}
 	if !reportSupportsRuntimeSettings(rep) {
+		if parsed != nil && len(parsed.Filters) > 0 {
+			return reportSettingsRequest{Err: fmt.Errorf("происхождение полей результата не доказано")}
+		}
 		return reportSettingsRequest{}
 	}
-	presetID, hasPreset := requestFormValue(r, "__preset")
-	if settings := readReportSettings(r); settings != nil {
-		settings = reportSettingsWithRequestVariant(r, settings)
-		return reportSettingsRequest{Settings: settings, ActivePresetID: presetID}
+	preset, hasPreset := requestFormValue(r, "__preset")
+	loaded, err := resultfilter.ResolveSettings(r.Context(), s.store, rep.Name, currentUserLogin(r), raw, preset, hasPreset)
+	if err != nil {
+		return reportSettingsRequest{Err: err}
 	}
-	if s.store == nil {
-		return reportSettingsRequest{Settings: reportSettingsWithRequestVariant(r, nil), ActivePresetID: presetID}
+	st := loaded.Settings
+	if raw != "" || loaded.PresetID == "" || loaded.PresetID == standardReportPresetID {
+		st = reportSettingsWithRequestVariant(r, st)
 	}
-
-	user := currentUserLogin(r)
-	if hasPreset {
-		if presetID == "" || presetID == standardReportPresetID {
-			return reportSettingsRequest{Settings: reportSettingsWithRequestVariant(r, nil), ActivePresetID: standardReportPresetID}
-		}
-		if p, err := s.store.GetReportPreset(r.Context(), rep.Name, user, presetID); err == nil && p != nil {
-			if st, err := reportpkg.ParseUserSettings(p.SettingsJSON); err == nil {
-				return reportSettingsRequest{Settings: st, ActivePresetID: p.ID}
-			}
-		}
-		return reportSettingsRequest{Settings: reportSettingsWithRequestVariant(r, nil), ActivePresetID: standardReportPresetID}
-	}
-
-	if p, err := s.store.GetDefaultReportPreset(r.Context(), rep.Name, user); err == nil && p != nil {
-		if st, err := reportpkg.ParseUserSettings(p.SettingsJSON); err == nil {
-			return reportSettingsRequest{Settings: st, ActivePresetID: p.ID}
-		}
-	}
-
-	// Fallback для баз, где до появления именованных пресетов уже была одна
-	// сохранённая настройка в _settings.
-	if settings := loadUserSettings(r.Context(), s.store, rep.Name, user); settings != nil {
-		settings = reportSettingsWithRequestVariant(r, settings)
-		return reportSettingsRequest{Settings: settings}
-	}
-	return reportSettingsRequest{Settings: reportSettingsWithRequestVariant(r, nil)}
+	return reportSettingsRequest{Settings: st, ActivePresetID: loaded.PresetID}
 }
 
 func reportSupportsRuntimeSettings(rep *reportpkg.Report) bool {
 	if rep == nil {
 		return false
+	}
+	if rep.Query != "" {
+		return true
 	}
 	if rep.Composition != nil {
 		return true
@@ -215,9 +188,6 @@ func reportSettingsPanelState(rep *reportpkg.Report, s *reportpkg.UserReportSett
 		return nil
 	}
 	comp := effectiveComposition(rep, s)
-	if comp == nil {
-		return nil
-	}
 	out := &reportpkg.UserReportSettings{}
 	if s != nil {
 		out.Variant = s.Variant
@@ -226,7 +196,7 @@ func reportSettingsPanelState(rep *reportpkg.Report, s *reportpkg.UserReportSett
 	if comp != nil {
 		out.Composition = panelComposition(comp)
 	}
-	if out.Variant == "" && out.Composition == nil && len(out.Filters) == 0 {
+	if rep.Query == "" && out.Variant == "" && out.Composition == nil && len(out.Filters) == 0 {
 		return nil
 	}
 	return out
@@ -572,12 +542,16 @@ func (s *Server) reportSettingsSave(w http.ResponseWriter, r *http.Request) {
 	}
 	// Валидируем JSON и сохраняем реканонизированный вид (issue #23): битый JSON
 	// отвергаем, а каноничная сериализация отбрасывает мусорные/лишние поля.
-	st, err := reportpkg.ParseUserSettings(raw)
+	st, err := resultfilter.ParseSettings(raw)
 	if err != nil {
 		http.Error(w, s.errText(r, err), http.StatusBadRequest)
 		return
 	}
 	st = reportSettingsWithRequestVariant(r, st)
+	if err := s.validateReportResultSettings(r, rep, st); err != nil {
+		http.Error(w, s.errText(r, err), http.StatusBadRequest)
+		return
+	}
 	canon := ""
 	if normalized := reportSettingsPanelState(rep, st); normalized != nil {
 		if canon, err = normalized.JSON(); err != nil {
