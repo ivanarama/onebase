@@ -28,6 +28,8 @@ type Param struct {
 	// хранят время суток, и «Дата <= &По» с полночью теряло всё, что было в этот
 	// день после 00:00.
 	PeriodEnd bool `yaml:"period_end"`
+	// Context is a trusted server binding, not an editable/default form value.
+	Context *ParamContext `yaml:"context,omitempty"`
 }
 
 type Report struct {

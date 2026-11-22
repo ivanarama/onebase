@@ -69,6 +69,7 @@ func RunFullWithOptions(dir string, opts Options) Result {
 		issues = append(issues, CheckFormVirtualColumns(proj)...)
 		issues = append(issues, CheckFormTablePartColumns(proj)...)
 		issues = append(issues, CheckReportOutputFormat(proj)...)
+		issues = append(issues, CheckReportContext(proj)...)
 		roles, rolesErr := auth.LoadRolesYAML(filepath.Join(dir, "roles"))
 		if rolesErr != nil && !AlreadyReported(issues, rolesErr.Error()) {
 			issues = append(issues, Issue{Message: "roles: " + rolesErr.Error()})
