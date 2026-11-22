@@ -59,12 +59,12 @@ func (s *Server) widgetColumnWidthsSave(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if err := r.ParseForm(); err != nil {
-		http.Error(w, "invalid widths", 400)
+		http.Error(w, "invalid widths", http.StatusBadRequest)
 		return
 	}
 	var widths map[string]int
 	if err := json.Unmarshal([]byte(r.FormValue("widths")), &widths); err != nil || len(widths) > 200 {
-		http.Error(w, "invalid widths", 400)
+		http.Error(w, "invalid widths", http.StatusBadRequest)
 		return
 	}
 	runner := widget.New(s.reg, s.store)
@@ -75,11 +75,11 @@ func (s *Server) widgetColumnWidthsSave(w http.ResponseWriter, r *http.Request) 
 	}
 	res := runner.Run(r.Context(), meta)
 	if res.AccessDenied {
-		http.Error(w, "forbidden", 403)
+		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 	if res.Error != "" {
-		http.Error(w, "widget unavailable", 400)
+		http.Error(w, "widget unavailable", http.StatusBadRequest)
 		return
 	}
 	allowed := make(map[string]bool, len(res.Columns))
@@ -88,7 +88,7 @@ func (s *Server) widgetColumnWidthsSave(w http.ResponseWriter, r *http.Request) 
 	}
 	for field, px := range widths {
 		if !allowed[field] || px < 40 || px > 1200 {
-			http.Error(w, "invalid widths", 400)
+			http.Error(w, "invalid widths", http.StatusBadRequest)
 			return
 		}
 	}
