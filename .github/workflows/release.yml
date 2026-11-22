@@ -321,6 +321,20 @@ jobs:
           path: dist
           merge-multiple: true
 
+      # A targeted rerun reuses earlier jobs' artifacts (retention: 7 days).
+      - name: Require every platform archive and checksum
+        shell: bash
+        working-directory: dist
+        run: |
+          set -eu
+          for arch in amd64 arm64; do
+            for archive in "onebase-windows-$arch.zip" "onebase-linux-$arch.tar.gz" "onebase-darwin-$arch.tar.gz"; do
+              if [[ ! -s "$archive" || ! -s "$archive.sha256" ]]; then
+                echo "::error::Missing archive or checksum for $archive"
+                exit 1
+              fi
+            done
+          done
 
       # Подпись сумм — здесь, а не в матрице сборки: приватный ключ не должен
       # попадать на windows/macos-раннеры, а достаточно одного места. Подпись
@@ -368,10 +382,14 @@ jobs:
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Claim build tag for this commit
+        run: bash .github/scripts/claim-build-tag.sh
+
       - name: Create Pre-Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: build-${{ github.run_number }}
+          target_commitish: ${{ github.sha }}
           name: build-${{ github.run_number }}
           prerelease: true
           files: dist/*
