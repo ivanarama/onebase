@@ -320,23 +320,34 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
   window._tpEnumLabels = obManagedReadJSON('ob-managed-tp-enum-labels', window._tpEnumLabels || {}) || {};
   window._tpEnumOrder = obManagedReadJSON('ob-managed-tp-enum-order', window._tpEnumOrder || {}) || {};
 
-  function ensureBanner(){
-    let b = document.getElementById('ob-fmevt-banner');
+  function ensureBanner(doc){
+    let b = doc.getElementById('ob-fmevt-banner');
     if (b) return b;
-    b = document.createElement('div');
+    b = doc.createElement('div');
     b.id = 'ob-fmevt-banner';
     b.style.cssText = 'position:fixed;top:14px;right:14px;max-width:380px;z-index:9999;display:flex;flex-direction:column;gap:6px;pointer-events:none';
-    document.body.appendChild(b);
+    doc.body.appendChild(b);
     return b;
   }
-  function flash(text, kind){
-    const b = ensureBanner();
-    const d = document.createElement('div');
+  function flash(text, kind, messageID){
+    let host = window;
+    try {
+      const top = window.top || window;
+      if (top.obMessagesConfig && top.obMessagesConfig().popup) {
+        if (messageID && top.obClaimMessage && !top.obClaimMessage(messageID)) return;
+        // A form response can arrive after its tab was hidden.
+        // Keep both the toast and its lifetime in the visible shell.
+        host = top;
+      }
+    } catch (e) {}
+    const doc = host.document;
+    const b = ensureBanner(doc);
+    const d = doc.createElement('div');
     const palette = kind === 'err'
       ? 'background:#fee2e2;color:#991b1b;border:1px solid #fecaca'
       : 'background:#d1fae5;color:#065f46;border:1px solid #a7f3d0';
     d.style.cssText = palette + ';padding:8px 28px 8px 12px;border-radius:6px;font-size:12px;box-shadow:0 1px 3px rgba(0,0,0,.08);pointer-events:auto;cursor:copy;position:relative;white-space:pre-wrap;word-break:break-word';
-    const msg = document.createElement('span');
+    const msg = doc.createElement('span');
     msg.textContent = text;
     d.appendChild(msg);
     // Клик по тосту — скопировать текст в буфер (удобно для ошибок). Тост не
@@ -344,21 +355,28 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
     d.title = 'Клик — скопировать текст';
     d.onclick = function(){
       try {
-        if (navigator.clipboard && navigator.clipboard.writeText) { navigator.clipboard.writeText(text); }
-        else { const ta=document.createElement('textarea'); ta.value=text; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); }
+        if (host.navigator.clipboard && host.navigator.clipboard.writeText) { host.navigator.clipboard.writeText(text); }
+        else { const ta=doc.createElement('textarea'); ta.value=text; doc.body.appendChild(ta); ta.select(); doc.execCommand('copy'); ta.remove(); }
         const prev = d.style.boxShadow; d.style.boxShadow='0 0 0 2px #16a34a';
-        setTimeout(function(){ d.style.boxShadow=prev; }, 600);
+        host.setTimeout(function(){ d.style.boxShadow=prev; }, 600);
       } catch(e){}
     };
-    const x = document.createElement('span');
+    const x = doc.createElement('span');
     x.textContent = '×';
     x.style.cssText = 'position:absolute;top:4px;right:8px;cursor:pointer;font-weight:700;opacity:.55;font-size:14px;line-height:1';
     x.onclick = function(ev){ ev.stopPropagation(); d.remove(); };
     d.appendChild(x);
     b.appendChild(d);
+    // Не больше пяти плашек: новая вытесняет самую старую.
+    while (b.children.length > 5) b.removeChild(b.firstChild);
     // Ошибки держим до закрытия крестиком (чтобы успеть прочитать/скопировать);
-    // info-сообщения сами исчезают через 5 c.
-    if (kind !== 'err') setTimeout(() => d.remove(), 5000);
+    // info-сообщения сами исчезают через message_seconds (по умолчанию 5 c).
+    if (kind !== 'err') host.setTimeout(() => d.remove(), flashSeconds() * 1000);
+  }
+  function flashSeconds(){
+    const m = document.querySelector ? document.querySelector('meta[name="ob-messages"]') : null;
+    const secs = m ? parseInt(m.getAttribute('data-seconds'), 10) : 0;
+    return secs > 0 ? secs : 5;
   }
   // Доступно другим скриптам (например, грид-IIFE показывает ошибки настройки).
   window.obFlash = flash;
@@ -530,6 +548,7 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
         }
       });
     });
+    if (typeof refreshPictureBindings === 'function') refreshPictureBindings(form, values);
     // A form handler may change a choice_filter source without dispatching a
     // native change event. Re-scan fingerprints after the whole response has
     // been applied, so dependants see the final source and selected values.
@@ -538,6 +557,65 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
     }
   }
   // END onebase-ro-apply-values
+  // BEGIN onebase-picture-bind
+  // refreshPictureBindings — ПолеКартинки с data_path: идентификатор вложения в
+  // скрытом поле → картинка и ссылка «открыть в полном размере». Подставляется
+  // только UUID: чужой адрес или javascript: в src/href не попадает.
+  function refreshPictureBindings(form, values){
+    if (!form) return;
+    var esc = function(s){ return (window.CSS && CSS.escape) ? CSS.escape(s) : s; };
+    var bindings = new Map();
+    form.querySelectorAll('input[data-ob-picture-for]').forEach(function(inp){
+      var name = inp.getAttribute('data-ob-picture-for');
+      var field = inp.getAttribute('data-ob-picture-field');
+      if (field) {
+        var binding = bindings.get(field);
+        if (!binding) {
+          // Only the checked radio represents the group's value.
+          var controls = Array.prototype.filter.call(form.querySelectorAll('[name="' + esc(field) + '"]'), function(c){
+            return c.type !== 'radio' || c.checked;
+          });
+          var editors = controls.filter(function(c){ return c.getAttribute('data-ob-picture-for') === null; });
+          var editor = editors.find(controlSubmittable);
+          // Disabled editors still receive applyValues, but cannot carry the
+          // value on submit. Prefer the successful editor (and its newer typing),
+          // then an existing carrier when this is only a partial response.
+          var source = editor || editors[0] || controls.find(controlSubmittable) || inp;
+          var value = source.value;
+          if (!editors.length && values && Object.prototype.hasOwnProperty.call(values, field)) {
+            value = values[field] == null ? '' : String(values[field]);
+          }
+          binding = {value: value, carrier: !!editor};
+          bindings.set(field, binding);
+        }
+        inp.value = binding.value;
+        // Re-elect on every response: showing the editor retires the fallback,
+        // hiding it promotes exactly one successful preview. Never enable a
+        // disabled business control or a preview inside a disabled fieldset.
+        inp.removeAttribute('name');
+        if (!binding.carrier && controlSubmittable(inp)) {
+          inp.setAttribute('name', field);
+          binding.carrier = true;
+        }
+      }
+      var id = String(inp.value || '').trim().toLowerCase();
+      var ok = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id) &&
+        id !== '00000000-0000-0000-0000-000000000000';
+      var url = ok ? '/ui/attachments/' + id + '/download' : '';
+      var link = form.querySelector('[data-ob-picture-link="' + esc(name) + '"]');
+      var empty = form.querySelector('[data-ob-picture-empty="' + esc(name) + '"]');
+      if (link) {
+        if (ok) {
+          link.setAttribute('href', url);
+          var img = link.querySelector('img');
+          if (img && img.getAttribute('src') !== url) img.setAttribute('src', url);
+        }
+        link.hidden = !ok;
+      }
+      if (empty) empty.hidden = ok;
+    });
+  }
+  // END onebase-picture-bind
   // applyChoiceList — заполняет <select> элемента ПолеСписка динамическим списком
   // значений из ответа НачалоВыбора (choiceList). Текущее значение сохраняется,
   // если присутствует в новом списке.
@@ -793,6 +871,7 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
               const o = document.createElement('option');
               o.value = opt.id;
               o.textContent = opt._label;
+              if (opt['\u0000ref_style']) o.setAttribute('style', opt['\u0000ref_style']);
               if (String(opt.id) === cur) o.selected = true;
               sel.appendChild(o);
             });
@@ -1266,10 +1345,12 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
 	// диалог уже не тот — ответ некуда применять.
 	if (snapshot.pickerRequest && snapshot.pickerRequest.search && !window.obPickerRequestCurrent(snapshot.pickerRequest)) return;
     try {
+      var closeSource = freshCloseIntentID();
+      programmaticCloseSource = {token: closeSource, revision: snapshot.editRevision};
       const res = await fetch(URL, {
         method: 'POST',
         body: body,
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=utf-8', 'X-OneBase-Conceal-Context': form && form.getAttribute ? form.getAttribute('data-ob-conceal-context') || '' : '' },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=utf-8', 'X-OneBase-Conceal-Context': form && form.getAttribute ? form.getAttribute('data-ob-conceal-context') || '' : '', 'X-OneBase-Form-Close-Source': closeSource },
         credentials: 'same-origin'
       });
       const data = await res.json();
@@ -1280,6 +1361,19 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
 		throw new Error('invalid form-event response');
 	  }
       responseKnown = true;
+      if (res.ok && data.ok && !data.error && !data.cancel && data.csv) {
+        var bytes = Uint8Array.from(atob(data.csv.content), function (character) { return character.charCodeAt(0); });
+        var objectURL = window.URL.createObjectURL(new Blob([bytes], {type: 'text/csv;charset=utf-8'}));
+        var link = document.createElement('a');
+        link.href = objectURL;
+        link.download = data.csv.name;
+        document.body.appendChild(link);
+        try { link.click(); }
+        finally {
+          link.remove();
+          setTimeout(function () { window.URL.revokeObjectURL(objectURL); }, 1000);
+        }
+      }
       if (!res.ok || !data.ok || data.error || data.cancel) data.revealed = [];
       if (window.obApplyConcealed) window.obApplyConcealed(data.revealed, form);
 	  // Even parseable JSON on non-2xx may come from an intermediary after the
@@ -1289,6 +1383,16 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
       // optimistic version before any renderer, picker or message callback can
       // throw, so a later queued action updates the row instead of inserting it.
       applySavedIdentity(data);
+      // Обработчики ожидания: подключение/отключение таймеров из ответа.
+      if (data.idle && typeof window.obManagedApplyIdle === 'function') window.obManagedApplyIdle(data.idle);
+      var idleSnapshot = !snapshot.elementName && snapshot.eventName === 'ОбработкаОжидания';
+      // An active grid editor may not have emitted onCellChange yet. Commit
+      // it before checking the edit clock or applying an older tick response.
+      // A veto leaves the current editor and its input intact.
+      if (idleSnapshot && window.obGridSync && window.obGridSync() === false) {
+        setManagedFormDirty(true);
+        return;
+      }
       // The user can type after FormData was sent. An old response must not
       // navigate away or repaint those newer edits, even when the handler
       // saved the old snapshot and returned dirty=false.
@@ -1302,7 +1406,7 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
           // controls may receive values from the older server snapshot.
           applyCloseResponse(data, snapshot.body, currentBody);
         } else {
-          (data.messages || []).forEach(m => flash(m, 'ok'));
+          (data.messages || []).forEach((message, index) => flash(message, 'ok', (data.messageIDs || [])[index]));
           if (data.error) flash(data.error, 'err');
         }
         setManagedFormDirty(true);
@@ -1339,7 +1443,7 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
         // эхо отправленного значения не затирает.
         if (data.values) applyValues(data.values, data.refOptions, snapshot.body, snapshot.controlState);
         if (window.obApplyConcealed) window.obApplyConcealed(data.revealed, form, data.values || {});
-        (data.messages || []).forEach(m => flash(m, 'ok'));
+        (data.messages || []).forEach((message, index) => flash(message, 'ok', (data.messageIDs || [])[index]));
         if (data.error) flash(data.error, 'err');
         openItemPicker(data.pickerData, elementName, extraParams || null, snapshot.pickerRequest);
         return;
@@ -1354,10 +1458,10 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
       // partially failing renderer. Programmatic response application does
       // not emit input/change, so raise it before touching mutable DOM state.
       if (data.dirty === true) setManagedFormDirty(true);
-      var beforePostMerged = beforePostSnapshot(snapshot) && formEditState.revision !== snapshot.editRevision;
-      if (beforePostMerged) {
-        // Перед ответом на вопрос сохранить свежий ввод, но принять правки
-        // обработчика в полях и таблицах, которых пользователь не касался.
+      var responseMerged = (beforePostSnapshot(snapshot) || idleSnapshot) && formEditState.revision !== snapshot.editRevision;
+      if (responseMerged) {
+        // Before-post and background ticks share the close controller's
+        // merge: retain newer input and apply updates to untouched data.
         var mergeRevision = formEditState.revision;
         var mergeBody = await closeSnapshotBody('', '');
         if (!mergeBody || formEditState.revision !== mergeRevision) {
@@ -1376,16 +1480,16 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
         applyChoiceList(elementName, data.choiceList);
         applyFormTables(data.formTables);
       }
-      if (!beforePostMerged && window.obApplyConcealed) window.obApplyConcealed(data.revealed, form, data.values || {});
+      if (!responseMerged && window.obApplyConcealed) window.obApplyConcealed(data.revealed, form, data.values || {});
 	  // Server events repaint controls programmatically and therefore do not
 	  // trigger input/change. Raise dirty for unsaved handler mutations; clear
 	  // it only when this response proves a successful Object.Write and no
 	  // user edits followed the snapshot that was saved.
-	  if (!beforePostMerged && data.dirty === false && (data.savedId || data.version)) {
+	  if (!responseMerged && data.dirty === false && (data.savedId || data.version)) {
 		setManagedFormDirty(formEditState.revision !== snapshot.editRevision);
 	  }
-      if (!beforePostMerged) {
-        (data.messages || []).forEach(m => flash(m, 'ok'));
+      if (!responseMerged) {
+        (data.messages || []).forEach((message, index) => flash(message, 'ok', (data.messageIDs || [])[index]));
         if (data.error) flash(data.error, 'err');
       }
       if (navigationBlocked) flash(closeMessage('navigationDirty', 'Форма содержит несохранённые изменения — переход не выполнен'), 'err');
@@ -1411,9 +1515,9 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
       if (beforePostSnapshot(snapshot) && beforePostState) {
         // Merging protects newer input but cannot authorize posting it: the
         // handler checked another snapshot. A fresh user attempt must check it.
-        beforePostState.outcome = !beforePostMerged && !data.cancel && !data.error && !navigationBlocked;
+        beforePostState.outcome = !responseMerged && !data.cancel && !data.error && !navigationBlocked;
         beforePostState.approval.revision = snapshot.editRevision;
-        if (beforePostMerged) flash(closeMessage('formChanged', 'Форма изменилась во время проверки закрытия. Повторите закрытие.'), 'err');
+        if (responseMerged) flash(closeMessage('formChanged', 'Форма изменилась во время проверки закрытия. Повторите закрытие.'), 'err');
       }
     } catch (e) {
       // A lost/unparseable response for /new may hide a committed insert and
@@ -1560,6 +1664,14 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
   // this whole concurrency domain. obFire is defined above but only invoked
   // after this IIFE has initialized every shared state variable.
   var formEventQueue = Promise.resolve();
+  var programmaticCloseSource = null;
+  // SSE can arrive before its form-event response. Wait only for our exact
+  // snapshot. The controller rechecks and consumes it in the child document.
+  window.obPrepareProgrammaticClose = function(source){
+    var snapshot = programmaticCloseSource;
+    if (!source || !snapshot || snapshot.token !== source) return Promise.resolve('');
+    return formEventQueue;
+  };
   var formEventPendingCount = 0;
   var formEventPending = false;
   var formEventWriteUnknown = false;
@@ -1577,6 +1689,31 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
   // replay ledger and another explicit close attempt needs a fresh UUID.
   var retryableClose = null;
 	var reloadRequired = false;
+  // A successful native POST replaces this document only after its response.
+  // During that wait the old /new snapshot must never be sent by an idle tick.
+  var nativeSubmitPending = false;
+  var nativeSubmitEvents = [];
+  window.obManagedNativeSubmitStarted = function(){ nativeSubmitPending = true; };
+  document.addEventListener('submit', function(e){
+    if (!e.target || e.target.id !== 'main-form') return;
+    // Read the live cancellation state until the next task: a microtask may
+    // run between native listeners, before a later confirm/grid/file veto.
+    // Keep every event until then, including synchronous submit reentry.
+    nativeSubmitEvents.push(e);
+    setTimeout(function(){
+      if (!e.defaultPrevented) nativeSubmitPending = true;
+      nativeSubmitEvents.splice(nativeSubmitEvents.indexOf(e), 1);
+    }, 0);
+  }, true);
+  // Тик обработчика ожидания не встаёт в очередь за событием пользователя и не
+  // мешает закрытию: пока форма занята, тик пропускается молча.
+  window.obManagedIdleBusy = function(){
+    var form = document.getElementById('main-form');
+    var fileSubmitPending = form && typeof obManagedFileSubmitPending !== 'undefined' && obManagedFileSubmitPending.has(form);
+    return nativeSubmitPending || nativeSubmitEvents.some(function(e){ return !e.defaultPrevented; }) ||
+      fileSubmitPending || formEventPendingCount > 0 || !!closePending || !!retryableClose || closeHandoffPending ||
+      !!beforePostState || reloadRequired || formEventWriteUnknown || manualReconcileRequired;
+  };
 	var CLOSE_EPOCH = cfg.closeEpoch == null ? '' : String(cfg.closeEpoch);
 	var closeClockServerBase = Number(cfg.closeServerNowMs);
 	if (!Number.isFinite(closeClockServerBase)) closeClockServerBase = Date.now();
@@ -1828,7 +1965,7 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
 	applyValues(values, refOptions);
 	applyFormTables(formTables);
     if (window.obApplyConcealed) window.obApplyConcealed(data.revealed, document.getElementById('main-form'), values || {}, data.values || {});
-    (data.messages || []).forEach(function(message){ flash(message, 'ok'); });
+    (data.messages || []).forEach((message, index) => flash(message, 'ok', (data.messageIDs || [])[index]));
     if (data.error) flash(data.error, 'err');
     } catch (e) {
       if (window.obApplyConcealed) window.obApplyConcealed([], form, {});
@@ -1888,10 +2025,22 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
         flash(closeMessage('controllerUnavailable', 'Проверка закрытия недоступна. Форма оставлена открытой.'), 'err');
         return {allowed: false, intentId: '', error: 'controller-not-ready'};
       }
-      var mode = options.mode ? String(options.mode) : await closeChoice();
+      // Recheck after the asynchronous shell bridge: input may have changed
+      // since preparation, and another copy has its own independent token.
+      var sourceSnapshot = programmaticCloseSource;
+      var ownSource = reason === 'programmatic' && options.closeSource && sourceSnapshot &&
+        sourceSnapshot.token === options.closeSource;
+      if (ownSource) programmaticCloseSource = null;
+      var automaticDiscard = !options.mode && ownSource && sourceSnapshot.revision === formEditState.revision;
+      var mode = options.mode
+        ? String(options.mode)
+        : (automaticDiscard ? 'discard' : await closeChoice());
       if (mode === 'cancel') return {allowed: false, intentId: '', error: 'user-cancelled'};
       var body = await closeSnapshotBody(reason, mode);
       if (!body) return {allowed: false, intentId: '', error: 'form-state'};
+      if (automaticDiscard && sourceSnapshot.revision !== formEditState.revision) {
+        return {allowed: false, intentId: '', error: 'form-changed'};
+      }
       // File reads and grid synchronization may yield or commit fresh edits
       // after BeforePost completed. Never open a new intent under old approval.
       if (BEFORE_POST && mode === 'post' && !retryableClose &&
@@ -2066,7 +2215,7 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
 		  if (data.close && data.close.saved === true) {
 			if (currentBody) applyCloseResponse(data, body, currentBody);
 			else {
-			  (data.messages || []).forEach(function(message){ flash(message, 'ok'); });
+			  (data.messages || []).forEach((message, index) => flash(message, 'ok', (data.messageIDs || [])[index]));
 			  if (data.error) flash(data.error, 'err');
 			}
           }
@@ -2316,6 +2465,7 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
         try {
 		  if (form.id === 'main-form') window.obSetManagedFormDirty(false);
           nativeSubmit.call(form);
+          if (form.id === 'main-form') window.obManagedNativeSubmitStarted();
         } finally {
           if (submitterInput) submitterInput.remove();
         }
@@ -3137,7 +3287,7 @@ function obGridColumnIds(columns) {
       for (var k = 0; k < refOptsList.length; k++) {
         if (String(refOptsList[k].id) === String(opt.id)) return;
       }
-      refOptsList.push({id: opt.id, _label: opt._label, _ownerFilter: filterParam()});
+      refOptsList.push({id: opt.id, _label: opt._label, '\u0000ref_style': opt['\u0000ref_style'], '\u0000ref_style_bg': opt['\u0000ref_style_bg'], _ownerFilter: filterParam()});
     }
 
     // candidates — предзагруженные опции + серверные результаты, отфильтрованные
@@ -3152,7 +3302,9 @@ function obGridColumnIds(columns) {
         var lbl = String(o._label == null ? '' : o._label);
         if (f && lbl.toLowerCase().indexOf(f) < 0) return;
         seen[key] = true;
-        out.push({id: o.id, _label: lbl});
+        // choice_row_style: оформление варианта доезжает до списка ячейки и до
+        // окна подбора — проекция не должна его терять.
+        out.push({id: o.id, _label: lbl, '\u0000ref_style': o['\u0000ref_style'] || '', '\u0000ref_style_bg': o['\u0000ref_style_bg'] || ''});
       }
       var currentFilter = requestParam();
       if(choiceContext && args.column.choiceSeeds) {
@@ -3172,7 +3324,7 @@ function obGridColumnIds(columns) {
     function paintActive() {
       var nodes = list.querySelectorAll('[data-idx]');
       for (var k = 0; k < nodes.length; k++) {
-        nodes[k].style.background = (k === activeIdx) ? '#eef2ff' : '';
+        nodes[k].style.background = (k === activeIdx) ? '#eef2ff' : (nodes[k].getAttribute('data-ob-bg') || '');
       }
       if (activeIdx >= 0 && nodes[activeIdx] && nodes[activeIdx].scrollIntoView) {
         nodes[activeIdx].scrollIntoView({block: 'nearest'});
@@ -3193,7 +3345,8 @@ function obGridColumnIds(columns) {
         item.textContent = shown[k]._label;
         item.setAttribute('data-id', shown[k].id);
         item.setAttribute('data-idx', k);
-        item.style.cssText = 'padding:6px 10px;cursor:pointer;border-bottom:1px solid #f1f5f9';
+        item.style.cssText = 'padding:6px 10px;cursor:pointer;border-bottom:1px solid #f1f5f9' + (shown[k]['\u0000ref_style'] ? ';' + shown[k]['\u0000ref_style'] : '');
+        if (shown[k]['\u0000ref_style_bg']) item.setAttribute('data-ob-bg', shown[k]['\u0000ref_style_bg']);
         (function(o, idx) {
           item.addEventListener('mouseenter', function() { activeIdx = idx; paintActive(); });
           // mousedown, а не click: blur поля ввода закрыл бы список раньше click.
@@ -3270,7 +3423,7 @@ function obGridColumnIds(columns) {
           if (seq !== searchSeq || requestFilter !== requestParam()) return; // ответ устарел
           var keep = (activeIdx >= 0 && shown[activeIdx]) ? shown[activeIdx].id : '';
           serverRows = ((data && data.items) || []).map(function(row) {
-            return {id: row && row.id != null ? String(row.id) : '', _label: String((row && row._label) || '')};
+            return {id: row && row.id != null ? String(row.id) : '', _label: String((row && row._label) || ''), '\u0000ref_style': (row && row['\u0000ref_style']) || '', '\u0000ref_style_bg': (row && row['\u0000ref_style_bg']) || ''};
           }).filter(function(o) { return o.id !== ''; });
           serverFilter = requestFilter;
           if (isOpen) buildList(input.value, keep);
@@ -3324,6 +3477,8 @@ function obGridColumnIds(columns) {
         var o = document.createElement('option');
         o.value = opts[k].id;
         o.textContent = opts[k]._label;
+        if (opts[k]['\u0000ref_style']) o.setAttribute('style', opts[k]['\u0000ref_style']);
+        if (opts[k]['\u0000ref_style_bg']) o.setAttribute('data-ob-bg', opts[k]['\u0000ref_style_bg']);
         selEl.appendChild(o);
       }
       if(choiceContext && selectedId && !opts.some(function(o){return String(o.id)===String(selectedId);})) {
@@ -3334,7 +3489,9 @@ function obGridColumnIds(columns) {
         var id = selEl.value;
         if (!id) return;
         var chosen = selEl.options[selEl.selectedIndex];
-        pick({id: id, _label: chosen ? chosen.textContent : ''});
+        pick({id: id, _label: chosen ? chosen.textContent : '',
+          '\u0000ref_style': chosen ? chosen.getAttribute('style') || '' : '',
+          '\u0000ref_style_bg': chosen ? chosen.getAttribute('data-ob-bg') || (chosen.style && chosen.style.background) || '' : ''});
         args.commitChanges();
       });
       closeList();
@@ -4799,6 +4956,95 @@ obManagedReady(function () {
   var cfg = obManagedConfig();
   if (!cfg.autoOpen) return;
   setTimeout(function () { if (window.obFire) obFire('', 'ПриОткрытии'); }, 0);
+});
+
+// BEGIN onebase-form-idle
+// Обработчик ожидания (ПодключитьОбработчикОжидания 1С). Таймеры живут здесь,
+// в браузере: тик — обычное событие формы ОбработкаОжидания с текущими
+// значениями и подписью подключения; ответ применяется как ответ события.
+// Следующий тик ставится только после ответа предыдущего. Пока форма занята
+// другим событием, закрытием или открыто окно (вопрос, подбор) — тик
+// откладывается на секунду. На скрытой вкладке — не чаще раза в 5 интервалов
+// (и не чаще раза в 10 с); вернулись на вкладку — просроченный тик сразу.
+function obManagedIdleManager(env) {
+  // Без прототипа: имя процедуры — ключ, и «__proto__» или «constructor» в
+  // обычном объекте попали бы в унаследованные свойства — таймер нельзя было
+  // бы ни найти, ни удалить, и отключение не останавливало бы тики.
+  var timers = Object.create(null);
+  function key(p) { return String(p || '').toLowerCase(); }
+  function periodMs(t) {
+    var ms = t.interval * 1000;
+    return env.hidden() ? Math.max(ms * 5, 10000) : ms;
+  }
+  function stop(proc) {
+    var t = timers[key(proc)];
+    if (!t) return;
+    if (t.handle) env.clearTimeout(t.handle);
+    delete timers[key(proc)];
+  }
+  function schedule(t, ms) {
+    if (t.handle) env.clearTimeout(t.handle);
+    t.handle = env.setTimeout(function () { tick(t); }, Math.max(0, ms));
+  }
+  function tick(t) {
+    t.handle = null;
+    if (timers[key(t.proc)] !== t) return;
+    if (env.busy() || env.modal()) { schedule(t, 1000); return; }
+    var wait = periodMs(t) - (env.now() - t.last);
+    if (wait > 0) { schedule(t, wait); return; }
+    t.last = env.now();
+    if (t.once) delete timers[key(t.proc)];
+    var after = function () {
+      if (timers[key(t.proc)] === t) schedule(t, periodMs(t));
+    };
+    var p;
+    try { p = env.fire(t.proc, t.token); } catch (e) { p = null; }
+    Promise.resolve(p).then(after, after);
+  }
+  return {
+    apply: function (cmds) {
+      if (!cmds || !cmds.length) return;
+      cmds.forEach(function (c) {
+        if (!c || !c.proc) return;
+        stop(c.proc);
+        if (c.off) return;
+        var interval = Number(c.interval);
+        if (!(interval >= 1)) interval = 1;
+        var t = { proc: String(c.proc), interval: interval, once: !!c.once, token: String(c.token || ''), last: env.now(), handle: null };
+        timers[key(t.proc)] = t;
+        schedule(t, periodMs(t));
+      });
+    },
+    visibility: function () {
+      Object.keys(timers).forEach(function (k) {
+        var t = timers[k];
+        if (t.handle) schedule(t, periodMs(t) - (env.now() - t.last));
+      });
+    },
+    active: function () { return Object.keys(timers).map(function (k) { return timers[k].proc; }); }
+  };
+}
+// END onebase-form-idle
+obManagedReady(function () {
+  var cfg = obManagedConfig();
+  if (!cfg.url) return;
+  var mgr = obManagedIdleManager({
+    fire: function (proc, token) {
+      return window.obFire ? window.obFire('', 'ОбработкаОжидания', {_idle_proc: proc, _idle_token: token}) : null;
+    },
+    busy: function () { return typeof window.obManagedIdleBusy === 'function' && window.obManagedIdleBusy(); },
+    modal: function () {
+      return !!(document.getElementById('_question-modal') || document.getElementById('_ref-picker-modal') ||
+        document.getElementById('_item-picker-modal') || document.getElementById('_ref-create-modal') ||
+        document.getElementById('ob-managed-close-confirm'));
+    },
+    hidden: function () { return !!document.hidden; },
+    now: function () { return Date.now(); },
+    setTimeout: function (fn, ms) { return window.setTimeout(fn, ms); },
+    clearTimeout: function (h) { window.clearTimeout(h); }
+  });
+  window.obManagedApplyIdle = mgr.apply;
+  document.addEventListener('visibilitychange', mgr.visibility);
 });
 
 function obManagedTabKey(tabs) {
