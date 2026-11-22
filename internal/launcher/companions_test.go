@@ -5,7 +5,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // fakeCompanionRuntime записывает запуски вместо настоящих процессов.
@@ -155,5 +157,74 @@ func TestCompanionsPersistInStore(t *testing.T) {
 	f2 := &fakeCompanionRuntime{existing: map[string]bool{callistaPath: true}, running: map[string]bool{}}
 	if msgs := startBaseCompanions(newCompanionLauncher(f2.rt()), store, "нет-такой", []string{"callista"}); len(msgs) != 0 || len(f2.started) != 0 {
 		t.Fatalf("неизвестная запись без манифеста: %v, %v", f2.started, msgs)
+	}
+}
+
+func TestCompanionsStartIsSerializedBetweenWindows(t *testing.T) {
+	setLauncherDir(t, t.TempDir())
+	store := newTestStore(t)
+	base, err := NewClientBase("Test", "https://example.invalid")
+	if err != nil {
+		t.Fatal(err)
+	}
+	base.Companions = []Companion{{Key: "callista", Path: callistaPath}}
+	if err := store.Add(base); err != nil {
+		t.Fatal(err)
+	}
+	starting := make(chan struct{})
+	release := make(chan struct{})
+	secondProbe := make(chan struct{})
+	firstResult := make(chan []string, 1)
+	secondResult := make(chan []string, 1)
+	var started atomic.Int32
+	var running atomic.Bool
+	runtime := companionRuntime{
+		stat:    func(string) error { return nil },
+		running: func(string) bool { return running.Load() },
+		start: func(Companion) error {
+			if started.Add(1) == 1 {
+				close(starting)
+				<-release
+			}
+			running.Store(true)
+			return nil
+		},
+	}
+	secondRuntime := runtime
+	secondRuntime.running = func(path string) bool {
+		close(secondProbe)
+		return runtime.running(path)
+	}
+	go func() {
+		firstResult <- startBaseCompanions(newCompanionLauncher(runtime), store, base.ID, []string{"callista"})
+	}()
+	select {
+	case <-starting:
+	case <-time.After(5 * time.Second):
+		close(release)
+		t.Fatal("first window did not reach the launcher")
+	}
+	go func() {
+		sameStore := &Store{path: store.path}
+		secondResult <- startBaseCompanions(newCompanionLauncher(secondRuntime), sameStore, base.ID, []string{"callista"})
+	}()
+	select {
+	case <-secondProbe:
+		t.Error("second window checked the process before the first launch completed")
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(release)
+	for _, result := range []chan []string{firstResult, secondResult} {
+		select {
+		case messages := <-result:
+			if len(messages) != 0 {
+				t.Errorf("starting companion: %v", messages)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("window did not finish launch")
+		}
+	}
+	if got := started.Load(); got != 1 {
+		t.Fatalf("launched %d companions, want one", got)
 	}
 }

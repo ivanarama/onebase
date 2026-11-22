@@ -234,6 +234,9 @@ func (l *companionLauncher) Start(list []Companion, keys []string) []string {
 	return msgs
 }
 
+// Protect the process check and launch across windows and launcher processes.
+var companionLaunchMu sync.Mutex
+
 // startBaseCompanions — запуск для записи базы baseID: программы манифеста
 // комплекта (companions.yaml рядом с лаунчером), поверх них — пути станции из
 // записи в ibases.yaml. Отвергнутый манифест — сообщение, записи станции при
@@ -257,6 +260,20 @@ func startBaseCompanions(l *companionLauncher, store *Store, baseID string, keys
 		if b, err := store.Get(baseID); err == nil {
 			record = b.Companions
 		}
+	}
+	if store != nil {
+		companionLaunchMu.Lock()
+		defer companionLaunchMu.Unlock()
+		lock, err := acquireStoreFileLock(store.path + ".companions.lock")
+		if err != nil {
+			respondLog().Warn("не удалось получить блокировку запуска сопутствующих программ", "err", err)
+			return append(msgs, "Не удалось проверить запуск сопутствующих программ.")
+		}
+		defer func() {
+			if err := lock.Unlock(); err != nil {
+				respondLog().Warn("не удалось снять блокировку запуска сопутствующих программ", "err", err)
+			}
+		}()
 	}
 	return append(msgs, l.Start(mergeCompanions(manifest, record), keys)...)
 }
