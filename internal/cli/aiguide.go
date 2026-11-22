@@ -114,7 +114,7 @@ subsystems/*.yaml       подсистемы (структура интерфе�
 journals/*.yaml         журналы документов
 widgets/*.yaml          виджеты главной страницы
 pages/*.yaml            страницы (произвольные представления на DSL, из меню)
-roles/*.yaml            роли (RBAC)
+roles/*.yaml            роли (RBAC; без явных processors запуск обработок запрещён)
 forms/                  управляемые формы (опционально)
 docs/help/              пользовательское руководство: index.yaml, Markdown, images/
 src/*.os                модули DSL (логика объектов, обработок, отчётов)
