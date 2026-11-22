@@ -21,6 +21,9 @@ func (s *Server) listExcel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	params := parseListParams(r, entity, s.store.GetListPageSize(r.Context()))
+	if !s.allowExactListFilters(w, r, entity, params.Filters) {
+		return
+	}
 	var ok bool
 	params, ok = s.applyRowFilter(w, r, entity, "read", params)
 	if !ok {

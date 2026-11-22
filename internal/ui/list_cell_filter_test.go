@@ -3,13 +3,16 @@ package ui
 import (
 	"bytes"
 	"context"
+	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/ivantit66/onebase/internal/auth"
 	"github.com/ivantit66/onebase/internal/dbtest"
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/storage"
@@ -84,4 +87,47 @@ func TestListCellExactFilterHTTPMatrix(t *testing.T) {
 			}
 		}
 	})
+}
+
+func TestExactListFiltersRespectFieldPolicy(t *testing.T) {
+	entity := &metadata.Entity{Name: "PolicyItems", Kind: metadata.KindCatalog, Fields: []metadata.Field{
+		{Name: "Наименование", Type: metadata.FieldTypeString},
+		{Name: "ProtectedField", Type: metadata.FieldTypeString},
+	}}
+	server, ctx := newSubmitTestServer(t, []*metadata.Entity{entity})
+	if err := server.store.Upsert(ctx, entity.Name, uuid.New(), map[string]any{
+		"Наименование": "Sample", "ProtectedField": "Fixture",
+	}, entity); err != nil {
+		t.Fatal(err)
+	}
+	restricted := &auth.User{ID: "restricted", Login: "restricted", Roles: []*auth.Role{{
+		Name: "Restricted",
+		Permissions: auth.Permission{
+			Catalogs: map[string][]string{entity.Name: {"read"}},
+			FieldAccess: auth.FieldAccess{
+				Catalogs: map[string]auth.FieldPolicies{entity.Name: {"ProtectedField": {Read: "hide"}}},
+			},
+		},
+	}}}
+	router := chi.NewRouter()
+	server.Mount(router)
+	for _, path := range []string{"/ui/catalog/PolicyItems", "/ui/catalog/PolicyItems/excel"} {
+		for _, scenario := range []struct {
+			field string
+			value string
+			want  int
+		}{
+			{field: "Наименование", value: "Sample", want: http.StatusOK},
+			{field: "ProtectedField", value: "Fixture", want: http.StatusForbidden},
+		} {
+			values := url.Values{"f." + scenario.field + ".eq": {scenario.value}}
+			request := httptest.NewRequest(http.MethodGet, path+"?"+values.Encode(), nil)
+			request = request.WithContext(auth.ContextWithUser(request.Context(), restricted))
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, request)
+			if recorder.Code != scenario.want {
+				t.Fatalf("%s field %s: got HTTP %d, want %d", path, scenario.field, recorder.Code, scenario.want)
+			}
+		}
+	}
 }

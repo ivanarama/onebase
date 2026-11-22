@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"html"
 	"html/template"
+	"net/http"
 
 	"github.com/ivantit66/onebase/internal/metadata"
+	"github.com/ivantit66/onebase/internal/storage"
 )
 
 type listCellFilterValue struct {
@@ -26,12 +28,29 @@ func listCellFilters(row map[string]any, cols []metadata.Field) []listCellFilter
 	return out
 }
 
+// Exact cell filters select rows by the stored value. Apply the same field
+// policy as the cell attributes before the list or export reaches storage.
+func (s *Server) allowExactListFilters(w http.ResponseWriter, r *http.Request, entity *metadata.Entity, filters map[string]storage.FilterValue) bool {
+	if len(filters) == 0 {
+		return true
+	}
+	decisions := s.fieldDecisions(r.Context(), entity)
+	for field, filter := range filters {
+		if decision, ok := fieldDecisionByName(decisions, field); filter.Exact && ok && decision.Masked() {
+			s.renderForbidden(w, r)
+			return false
+		}
+	}
+	return true
+}
+
 // Save visible, unmasked scalar values before references become labels.
 func (s *Server) captureListCellFilters(ctx context.Context, entity *metadata.Entity, rows []map[string]any) {
 	decisions := s.fieldDecisions(ctx, entity)
+	columns := resolveListColumns(entity)
 	for _, row := range rows {
 		values := map[string]string{}
-		for _, field := range resolveListColumns(entity) {
+		for _, field := range columns {
 			if d, ok := fieldDecisionByName(decisions, field.Name); ok && d.Masked() {
 				continue
 			}
