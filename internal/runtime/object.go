@@ -22,8 +22,9 @@ type Object struct {
 	TablePartRows map[string][]map[string]any
 	// Record state is carried separately from application fields for XDTO.
 	// DSL Get/Set cannot change it; loading or XML decoding supplies the snapshot.
-	DeletionMark bool
-	Posted       bool
+	DeletionMark      bool
+	Posted            bool
+	serverAssignments *serverFieldAssignmentState
 }
 
 // TypeName — имя типа объекта для ТипЗнч() и отладчика: «Документ.Реализация»,
@@ -101,6 +102,7 @@ func (o *Object) Get(name string) any {
 }
 
 func (o *Object) Set(name string, v any) {
+	o.ForgetServerFieldAssignment(name)
 	if o.Fields == nil {
 		o.Fields = make(map[string]any)
 	}

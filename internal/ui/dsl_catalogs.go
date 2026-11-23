@@ -232,6 +232,7 @@ func (w *catWriter) Set(name string, v any) {
 	}
 	w.assigned[strings.ToLower(strings.TrimSpace(name))] = true
 	w.obj.Set(name, v)
+	w.obj.MarkServerFieldAssignment(name)
 }
 
 func (w *catWriter) GetDynamicField(name string) (any, bool) {
@@ -256,6 +257,7 @@ func (w *catWriter) SetDynamicField(name string, value any) bool {
 func (w *catWriter) forgetAssigned(names []string) {
 	for _, n := range names {
 		delete(w.assigned, strings.ToLower(strings.TrimSpace(n)))
+		w.obj.ForgetServerFieldAssignment(n)
 	}
 }
 
@@ -330,6 +332,7 @@ func (w *catWriter) deleteIfUnchanged() error {
 // write сохраняет объект через entityservice.Save — с запуском ПриЗаписи,
 // записью табличных частей и веб-хуками, как при записи из веб-формы.
 func (w *catWriter) write() error {
+	defer func() { w.obj.TakeServerFieldAssignments() }()
 	ctx := w.ctx()
 	isNew := !w.loaded && !w.saved
 	if !isNew {
@@ -358,12 +361,13 @@ func (w *catWriter) write() error {
 		state: &entityHookXDTOState{loaded: w.loaded, assigned: w.assigned},
 	})
 	result, err := w.s.entitySvc.Save(hookCtx, entityservice.SaveRequest{
-		Entity:          w.entity,
-		ID:              w.obj.ID,
-		IsNew:           isNew,
-		Fields:          w.obj.Fields,
-		TablePartRows:   w.obj.TablePartRows,
-		ExpectedVersion: w.expectedVersion,
+		Entity:            w.entity,
+		ServerAssignments: w.obj.TakeServerFieldAssignments(),
+		ID:                w.obj.ID,
+		IsNew:             isNew,
+		Fields:            w.obj.Fields,
+		TablePartRows:     w.obj.TablePartRows,
+		ExpectedVersion:   w.expectedVersion,
 		Preflight: func(txCtx context.Context, obj *runtime.Object) error {
 			if !isNew {
 				return nil
@@ -403,6 +407,7 @@ func (w *catWriter) accessID() uuid.UUID {
 
 // read перечитывает шапку и табличные части из БД (Объект.Прочитать()).
 func (w *catWriter) read() error {
+	w.obj.TakeServerFieldAssignments()
 	if !w.loaded && !w.saved {
 		return fmt.Errorf("объект ещё не записан")
 	}
