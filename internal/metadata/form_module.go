@@ -258,7 +258,10 @@ type FormElement struct {
 	// TextBold — жирное значение поля (ПолеВвода, ПолеДаты) или текст
 	// надписи: выделить главное на форме — имя клиента в заявке. Подпись поля
 	// остаётся обычной.
-	TextBold     bool   `yaml:"text_bold,omitempty"`
+	TextBold bool `yaml:"text_bold,omitempty"`
+
+	// LabelColor задаёт цвет подписи элемента ПолеВвода.
+	LabelColor   string `yaml:"label_color,omitempty"`
 	ReadOnlyWhen string `yaml:"readonly_when,omitempty"`
 	HiddenWhen   string `yaml:"hidden_when,omitempty"`
 	// TitleFrom — у колонки табличной части (kind: Колонка): имя реквизита
@@ -704,7 +707,7 @@ type FormModule struct {
 	Procedures map[string]*FormProcedure `yaml:"-"`
 
 	// Actions — переопределение стандартных действий формы объекта. Ключи
-	// delete/save/ok/close управляют видимостью платформенных кнопок, а
+	// delete/save/ok/close/copy управляют видимостью платформенных кнопок, а
 	// attachments — панелью вложений (plan 181C, #1621); права и серверные
 	// проверки они не ослабляют.
 	Actions map[string]*FormAction `yaml:"actions,omitempty"`
@@ -745,6 +748,8 @@ type FormModule struct {
 	// по реквизиту связанной записи. Значение — литерал или @ТекущийПользователь
 	// (идентификатор учётной записи смотрящего).
 	ListFilter []FormListCondition `yaml:"filter,omitempty"`
+	// ListProcessors adds links to runnable processors in the list toolbar.
+	ListProcessors []FormListProcessor `yaml:"list_processors,omitempty"`
 
 	// RefCardButtonAdminOnly — кнопку «Открыть карточку» видит только
 	// администратор (#1876). Оператору справочники вести не положено, и лупа у
@@ -794,6 +799,11 @@ type FormModule struct {
 	idMu      sync.Mutex `yaml:"-"`
 }
 
+type FormListProcessor struct {
+	Name  string            `yaml:"name"`
+	Title map[string]string `yaml:"title,omitempty"`
+}
+
 // FormListCondition — одно условие постоянного отбора формы списка.
 type FormListCondition struct {
 	Field string `yaml:"field"`
@@ -810,11 +820,31 @@ type FormListCondition struct {
 	// &ТекущийПользователь (идентификатор учётки) и &ТекущийЛогин подставляются
 	// сами; как и у @ТекущийПользователь, администратора условие не касается.
 	Query string `yaml:"query,omitempty"`
+	// ValueQuery supplies a single nonempty UUID for equality on Field.
+	// Invalid or ambiguous results close the list for the applicable user.
+	ValueQuery string `yaml:"value_query,omitempty"`
 	// Removable — отбор по умолчанию: над списком переключатель с подписью
 	// Label, снятый переключатель отключает условие (как «Только активные» в
 	// рабочем списке задач 1С). Без Removable условие снять нельзя.
 	Removable bool              `yaml:"removable,omitempty"`
 	Label     map[string]string `yaml:"label,omitempty"`
+}
+
+// ValueQueryField validates the configuration and resolves the reference field.
+func (c FormListCondition) ValueQueryField(entity *Entity) (string, error) {
+	op := strings.ToLower(strings.TrimSpace(c.Op))
+	if strings.TrimSpace(c.ValueQuery) == "" || c.Query != "" || c.Value != "" || op != "" && op != "eq" {
+		return "", fmt.Errorf("value_query требует непустой запрос и оператор eq без query или value")
+	}
+	name := strings.TrimSpace(c.Field)
+	if entity != nil {
+		for _, field := range entity.Fields {
+			if strings.EqualFold(field.Name, name) && field.RefEntity != "" {
+				return field.Name, nil
+			}
+		}
+	}
+	return "", fmt.Errorf("value_query: поле %q должно быть ссылочным реквизитом", name)
 }
 
 // DisplayLabel — подпись переключателя снимаемого отбора на языке lang
