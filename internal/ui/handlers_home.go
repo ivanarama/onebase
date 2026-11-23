@@ -261,6 +261,7 @@ func refreshableWidgetType(t metadata.WidgetType) bool {
 }
 
 func (s *Server) decorateRefreshResult(r *http.Request, wMeta *metadata.Widget, res *widget.Result, runner *widget.Runner) {
+	s.prepareWidgetColumnWidths(r, res)
 	if res == nil || !refreshableWidgetType(metadata.WidgetType(res.Type)) {
 		return
 	}
@@ -378,6 +379,7 @@ func (s *Server) widgetPartial(w http.ResponseWriter, r *http.Request) {
 	if t == nil {
 		t = tmpl
 	}
+	s.prepareWidgetColumnWidths(r, &res)
 	var body bytes.Buffer
 	if err := t.ExecuteTemplate(&body, "widget-body", res); err != nil {
 		s.serverError(w, r, err)
