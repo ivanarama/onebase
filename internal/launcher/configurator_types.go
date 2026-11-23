@@ -176,6 +176,7 @@ type saveEntity struct {
 	ListRefreshOn []string  `yaml:"list_refresh_on,omitempty"`
 	ListFilters   []string  `yaml:"list_filters,omitempty"`
 	NotifyChanges bool      `yaml:"notify_changes,omitempty"`
+	AudioPlayer   *bool     `yaml:"audio_player,omitempty"`
 	// InteractiveCreate — указатель: явное `false` обязано пережить round-trip.
 	InteractiveCreate *bool `yaml:"interactive_create,omitempty"`
 	// ChoiceRowStyle — choice_row_style справочника; редактор его не

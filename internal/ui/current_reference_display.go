@@ -55,12 +55,16 @@ func (s *Server) retainCurrentObjectRefOptions(ctx context.Context, entity *meta
 		}
 		label := selected // retain even a dangling stored ID; never silently clear it.
 		if row := rows[id.String()]; row != nil {
-			access.MaskRecord(s.currentReferenceDisplayDecisions(ctx, target), row)
-			label = firstStringField(row, target)
+			label = s.maskedCurrentReferenceLabel(ctx, target, row)
 		}
 		options[field.Name] = append(options[field.Name], map[string]any{"id": selected, "_label": label, "_choice_outside_filter": true})
 	}
 	return options, nil
+}
+
+func (s *Server) maskedCurrentReferenceLabel(ctx context.Context, target *metadata.Entity, row map[string]any) string {
+	access.MaskRecord(s.currentReferenceDisplayDecisions(ctx, target), row)
+	return firstStringField(row, target)
 }
 
 // FieldDecisions normally assumes that object read was already authorized and

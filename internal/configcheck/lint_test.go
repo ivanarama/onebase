@@ -152,6 +152,18 @@ fields:
 	}
 }
 
+func TestLintYAML_AudioPlayerKeyKnown(t *testing.T) {
+	dir := t.TempDir()
+	mkFile(t, filepath.Join(dir, "documents", "audio.yaml"), `name: Запись
+audio_player: true
+`)
+	for _, issue := range CheckLintYAML(dir) {
+		if issue.Code == "metadata.unvalidated-key" {
+			t.Fatalf("audio_player must be accepted: %+v", issue)
+		}
+	}
+}
+
 func TestLintYAML_DetailPanelChecksNestedKeys(t *testing.T) {
 	dir := t.TempDir()
 	mkFile(t, filepath.Join(dir, "catalogs", "товар.yaml"), `name: Товар

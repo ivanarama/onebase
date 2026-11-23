@@ -418,7 +418,7 @@ func entityYAMLSchema() *yamlLintSchema {
 		"owner",
 		"presentation", "order_by", "choice_preview", "choice_preview_proc",
 		"list_form", "item_form", "based_on", "list_mode", "list_filters", "interactive_create", "notify_changes", "list_refresh_on",
-		"fulltext", "search_fields", "detail_panel",
+		"fulltext", "search_fields", "detail_panel", "audio_player",
 	), map[string]*yamlLintSchema{
 		"titles": freeMap(),
 		// item_form принимает и строку (имя реквизита), и запись
