@@ -21,6 +21,7 @@ import (
 func TestSaveEntity_Roundtrip_PreservesAllFields(t *testing.T) {
 	input := `name: Номенклатура
 title: Каталог номенклатуры
+audio_player: true
 hierarchical: true
 hierarchy_kind: folders_and_items
 list_form:
@@ -63,6 +64,7 @@ tableparts:
 	for _, must := range []string{
 		"name: Номенклатура",
 		"title: Каталог номенклатуры",
+		"audio_player: true",
 		"hierarchical: true",
 		"hierarchy_kind: folders_and_items",
 		"list_form:",

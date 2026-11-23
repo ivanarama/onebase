@@ -1361,6 +1361,7 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
 		throw new Error('invalid form-event response');
 	  }
       responseKnown = true;
+      if (window.obAudioFilterResponse) window.obAudioFilterResponse(data, snapshot);
       if (res.ok && data.ok && !data.error && !data.cancel && data.csv) {
         var bytes = Uint8Array.from(atob(data.csv.content), function (character) { return character.charCodeAt(0); });
         var objectURL = window.URL.createObjectURL(new Blob([bytes], {type: 'text/csv;charset=utf-8'}));
@@ -1478,6 +1479,7 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
         window.applyTableParts(data.tableparts);
         applyValues(data.values, data.refOptions, snapshot.body, snapshot.controlState);
         applyChoiceList(elementName, data.choiceList);
+        if (window.obAudioApply) window.obAudioApply(data);
         applyFormTables(data.formTables);
       }
       if (!responseMerged && window.obApplyConcealed) window.obApplyConcealed(data.revealed, form, data.values || {});
@@ -1614,6 +1616,7 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
 	});
   }
   window.obFire = function(elementName, eventName, extraParams, pickerRequest){
+    if (window.obAudioBeforeEvent) extraParams = window.obAudioBeforeEvent(elementName, eventName, extraParams);
     return fireFormEvent(elementName, eventName, extraParams, pickerRequest);
   };
 

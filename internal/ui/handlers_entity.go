@@ -1733,6 +1733,13 @@ func (s *Server) formEdit(w http.ResponseWriter, r *http.Request) {
 	}
 
 	refOptions, _ := s.loadInitialRefOptions(r.Context(), entity, vals)
+	// vals originate from the authorized, masked persisted object above, not
+	// from submitted fields. Preserve its current reference outside the picker.
+	refOptions, err = s.retainCurrentObjectRefOptions(r.Context(), entity, vals, refOptions)
+	if err != nil {
+		s.serverError(w, r, err)
+		return
+	}
 	tpRefOpts, _ := s.loadInitialTPRefOptions(r.Context(), entity, tpRows, vals)
 
 	editUser := auth.UserFromContext(r.Context())

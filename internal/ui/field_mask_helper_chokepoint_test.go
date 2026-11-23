@@ -32,6 +32,9 @@ var maskHelperGateFuncs = map[string]bool{
 	// maskedRecordLabel зовёт maskRecord и отдаёт наружу только представление
 	// (field_access.go:82) — законная точка наложения маски.
 	"maskedRecordLabel": true,
+	// Маска подписи сохранённой ссылки проверяется через HTTP в
+	// TestCurrentReferenceDisplayHTTPMatrix.
+	"maskedCurrentReferenceLabel": true,
 	// maskDSLValue — та же полевая политика для одиночного значения в DSL.
 	"maskDSLValue": true,
 }
