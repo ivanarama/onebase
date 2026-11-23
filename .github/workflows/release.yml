@@ -309,9 +309,6 @@ jobs:
     permissions:
       contents: write   # публикация пре-релиза
     steps:
-      # checkout нужен чтобы `git log` дал subject последнего коммита для
-      # <!-- summary --> маркера. Сайт onabase.site берёт текст из этого
-      # маркера для карточки релиза — без него попадает дефолтный «Автосборка…».
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1
@@ -371,16 +368,10 @@ jobs:
           go run ./tools/relsign sign -pub "$RELEASE_SIGNING_PUBLIC_KEY" "${sums[@]}"
           ls -1 dist/*.sig
 
-      - name: Compute commit subject
-        id: subj
-        # heredoc-форма GH_OUTPUT — корректно переживает спецсимволы
-        # (кавычки, обратные апострофы, эмодзи) в subject коммита.
-        run: |
-          {
-            echo "subject<<EOF"
-            git log -1 --format=%s
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
+      - name: Prepare pre-release notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 .github/scripts/build-notes.py > "$RUNNER_TEMP/build-notes.md"
 
       - name: Claim build tag for this commit
         run: bash .github/scripts/claim-build-tag.sh
@@ -393,57 +384,7 @@ jobs:
           name: build-${{ github.run_number }}
           prerelease: true
           files: dist/*
-          body: |
-            <!-- summary: ${{ steps.subj.outputs.subject }} -->
-
-            ## Что нового
-
-            ${{ steps.subj.outputs.subject }}
-
-            ## Сборка
-
-            Автосборка из ветки `main`.
-            Коммит: `${{ github.sha }}`
-            Версия платформы: `build-${{ github.run_number }}`
-
-            Для идентификации: в конфигураторе в шапке отображается `платформа build-${{ github.run_number }}`.
-
-      - name: Append commit diff
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          TAG="build-${{ github.run_number }}"
-          # Find the previous build release
-          PREV=$(gh release list --repo "${{ github.repository }}" --limit 50 --json tagName --jq '.[].tagName' \
-            | grep '^build-' \
-            | sed 's/build-//' \
-            | sort -n \
-            | awk -v cur="${{ github.run_number }}" '$1 < cur' \
-            | tail -1)
-
-          SUMMARY=""
-          CHANGES=""
-
-          if [[ -n "$PREV" ]]; then
-            PREV_TAG="build-${PREV}"
-            COMMITS=$(gh api "repos/${{ github.repository }}/compare/${PREV_TAG}...${TAG}" \
-              --jq '.commits[] | "- \(.commit.message | split("\n")[0]) (\(.sha[0:7]))"' 2>/dev/null || true)
-
-            if [[ -n "$COMMITS" ]]; then
-              COUNT=$(echo "$COMMITS" | wc -l | tr -d ' ')
-              CHANGES=$'\n\n'"## Изменения с ${PREV_TAG} (${COUNT} коммит(ов))"$'\n'"${COMMITS}"
-
-              # Generate summary from first commit message (one line, stripped of conventional prefix)
-              FIRST=$(echo "$COMMITS" | head -1 | sed 's/([^)]*)$//' | sed 's/^[- ]*//' | sed 's/<!--//g; s/-->//g')
-              SUMMARY="<!-- summary: ${FIRST} -->"$'\n\n'
-            fi
-          fi
-
-          # Read current body, prepend summary marker, append changes
-          CURRENT=$(gh release view "$TAG" --repo "${{ github.repository }}" --json body --jq '.body')
-          NEW_BODY="${SUMMARY}${CURRENT}${CHANGES}"
-
-          gh release edit "$TAG" --repo "${{ github.repository }}" --notes "$NEW_BODY"
+          body_path: ${{ runner.temp }}/build-notes.md
 
   release:
     name: Create GitHub Release
