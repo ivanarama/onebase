@@ -220,7 +220,7 @@ func New(reg *runtime.Registry, store *storage.DB, interp *interpreter.Interpret
 		r.Post("/documents/{entity}/{id}/post", h.postDocument())
 
 		// Web UI
-		frontend.Mount(r)
+		frontend.Mount(r.With(authH.SecureCookiePolicy))
 
 		r.Get("/", func(w http.ResponseWriter, r *http.Request) {
 			http.Redirect(w, r, "/ui", http.StatusFound)
