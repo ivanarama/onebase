@@ -488,20 +488,56 @@ func (r *Repo) createSession(ctx context.Context, userID, windowsSID string, met
 		q += " AND windows_sid = " + d.Placeholder(11)
 		args = append(args, windowsSID)
 	}
-	// Serialize issuance with a concurrent disable/unlink. SQLite already
-	// serializes writers for this INSERT.
-	if d.Name() == "postgres" {
-		q += " FOR SHARE"
+	limit := 0
+	if meta.Kind == SessionKindEnterprise {
+		limit = r.db.GetMaxSessionsPerUser(ctx)
 	}
-	result, err := r.db.Exec(ctx, q, args...)
+	// SQLite serializes writers. PostgreSQL must also serialize two capped
+	// logins to this user, from the INSERT to the eviction at commit.
+	if d.Name() == "postgres" {
+		if limit > 0 {
+			q += " FOR UPDATE"
+		} else {
+			q += " FOR SHARE"
+		}
+	}
+	insert := func(writeCtx context.Context) error {
+		result, err := r.db.Exec(writeCtx, q, args...)
+		if err != nil {
+			return err
+		}
+		if result.RowsAffected != 1 {
+			return ErrAccountUnavailable
+		}
+		return nil
+	}
+	if limit <= 0 {
+		if err := insert(ctx); err != nil {
+			return "", err
+		}
+		return token, nil
+	}
+	var displaced bool
+	err := r.db.WithTxScope(ctx, func(txCtx context.Context) error {
+		if err := insert(txCtx); err != nil {
+			return err
+		}
+		// As before, a cleanup failure need not reject an otherwise valid
+		// login. A savepoint keeps PostgreSQL's outer transaction committable.
+		if err := r.db.WithTxScope(txCtx, func(trimCtx context.Context) error {
+			var err error
+			displaced, err = r.trimEnterpriseSessions(trimCtx, userID, tokenHash, limit)
+			return err
+		}); err != nil {
+			authLog().Warn("не удалось применить лимит сессий", "user_id", userID, "err", err)
+		}
+		return nil
+	})
 	if err != nil {
 		return "", err
 	}
-	if result.RowsAffected != 1 {
-		return "", ErrAccountUnavailable
-	}
-	if meta.Kind == SessionKindEnterprise {
-		r.enforceSessionLimit(ctx, userID, meta)
+	if displaced {
+		r.auditSessionDisplacement(ctx, userID, meta.IP)
 	}
 	return token, nil
 }
@@ -552,30 +588,22 @@ func (r *Repo) migrateSessionTokens(ctx context.Context) error {
 	})
 }
 
-// enforceSessionLimit применяет политику `auth.max_sessions_per_user`
-// (план 78, п. 1.6): при превышении лимита вытесняет старейшие по активности
-// enterprise-сессии пользователя, освобождая место новой. Именно вытеснение,
-// а не отказ во входе: брошенная сессия (браузер закрыт без «Выйти») при TTL
-// 24 ч заблокировала бы пользователя до вмешательства админа. Сессии
-// конфигуратора не считаются и не вытесняются — иначе вернулся бы баг «вход
-// в конфигуратор выбивает Предприятие». Ошибки не фатальны: политика не
-// должна ломать вход.
-func (r *Repo) enforceSessionLimit(ctx context.Context, userID string, meta SessionMeta) {
-	limit := r.db.GetMaxSessionsPerUser(ctx)
-	if limit <= 0 {
-		return
-	}
+// trimEnterpriseSessions keeps the newly issued token and the most recently
+// active prior sessions. Wall clocks can tie at database precision or move
+// backward, so timestamps cannot identify the token being handed to the client.
+func (r *Repo) trimEnterpriseSessions(ctx context.Context, userID, newTokenHash string, limit int) (bool, error) {
 	d := r.db.Dialect()
-	// Keep the most recently active sessions in a single statement. This runs
-	// after successful issuance so a rejected login cannot evict a live session.
 	delQ := fmt.Sprintf(`DELETE FROM _sessions WHERE user_id = %s AND kind = %s AND token NOT IN (
 		SELECT token FROM _sessions WHERE user_id = %s AND kind = %s AND expires_at > %s
-		ORDER BY COALESCE(last_seen_at, created_at, expires_at) DESC, created_at DESC, token DESC LIMIT %s)`,
-		d.Placeholder(1), d.Placeholder(2), d.Placeholder(3), d.Placeholder(4), d.Now(), d.Placeholder(5))
-	result, err := r.db.Exec(ctx, delQ, userID, SessionKindEnterprise, userID, SessionKindEnterprise, limit)
-	if err != nil || result.RowsAffected == 0 {
-		return
-	}
+		ORDER BY CASE WHEN token_hash = %s THEN 0 ELSE 1 END,
+			COALESCE(last_seen_at, created_at, expires_at) DESC, created_at DESC, token DESC LIMIT %s)`,
+		d.Placeholder(1), d.Placeholder(2), d.Placeholder(3), d.Placeholder(4), d.Now(), d.Placeholder(5), d.Placeholder(6))
+	result, err := r.db.Exec(ctx, delQ, userID, SessionKindEnterprise, userID, SessionKindEnterprise, newTokenHash, limit)
+	return result.RowsAffected > 0, err
+}
+
+func (r *Repo) auditSessionDisplacement(ctx context.Context, userID, ip string) {
+	d := r.db.Dialect()
 	// Аудит вытеснения — актор сам пользователь: это его новый вход. Логин нужен
 	// лишь для читаемости записи: если прочитать не удалось, пишем аудит с
 	// пустым логином, но по user_id событие всё равно найдётся.
@@ -584,7 +612,7 @@ func (r *Repo) enforceSessionLimit(ctx context.Context, userID string, meta Sess
 		d.Placeholder(1)), userID).Scan(&login); err != nil {
 		authLog().Debug("не удалось прочитать логин для аудита вытеснения сессии", "err", err)
 	}
-	r.db.LogAction(ctx, "session_displaced", "", login, userID, userID, login, meta.IP)
+	r.db.LogAction(ctx, "session_displaced", "", login, userID, userID, login, ip)
 }
 
 // DeleteExpiredSessions удаляет истёкшие сессии всех пользователей.

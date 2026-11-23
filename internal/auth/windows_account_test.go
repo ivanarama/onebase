@@ -127,3 +127,45 @@ func TestMigrateExistingUsersToWindowsBindings(t *testing.T) {
 		require.NoError(t, err)
 	})
 }
+
+func TestConcurrentCappedEnterpriseLogins(t *testing.T) {
+	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
+		ctx := t.Context()
+		repo := auth.NewRepo(db)
+		require.NoError(t, repo.EnsureSchema(ctx))
+		user, err := repo.CreateManaged(ctx, "limited", "Password-123", "", true)
+		require.NoError(t, err)
+		require.NoError(t, db.SaveMaxSessionsPerUser(ctx, 1))
+		start := make(chan struct{})
+		type login struct {
+			token string
+			err   error
+		}
+		const clients = 4
+		results := make(chan login, clients)
+		meta := auth.SessionMeta{Kind: auth.SessionKindEnterprise}
+		for range clients {
+			go func() {
+				<-start
+				token, err := repo.CreateSession(ctx, user.ID, meta)
+				results <- login{token: token, err: err}
+			}()
+		}
+		close(start)
+		logins := make([]login, clients)
+		for i := range logins {
+			logins[i] = <-results
+		}
+		live := 0
+		for _, login := range logins {
+			require.NoError(t, login.err)
+			_, err := repo.LookupSessionKind(ctx, login.token, meta.Kind)
+			if err == nil {
+				live++
+			} else {
+				require.True(t, storage.IsNotFound(err), "session lookup: %v", err)
+			}
+		}
+		require.Equal(t, 1, live)
+	})
+}
