@@ -75,6 +75,7 @@ func (s *Server) applyListFormFilter(r *http.Request, entity *metadata.Entity, p
 			isQuery bool
 		)
 		if cond.ValueQuery != "" {
+			isQuery = true
 			pred, ok = s.listFilterValueQueryPredicate(r.Context(), entity, cond, user)
 		} else if strings.TrimSpace(cond.Query) != "" {
 			isQuery = true
@@ -97,8 +98,8 @@ func (s *Server) applyListFormFilter(r *http.Request, entity *metadata.Entity, p
 	parts := queries
 	if len(fields) != 0 {
 		cond := storage.Predicate{All: fields}
-		// Отбор по полю сохраняет папки для навигации. Условие query
-		// ограничивает и папки, и записи; строковый доступ добавляется через И.
+		// Простой отбор по полю сохраняет папки для навигации. Условия query
+		// и value_query ограничивают и папки, и записи; строковый доступ — через И.
 		if entity.Hierarchical {
 			cond = storage.Predicate{Any: []storage.Predicate{
 				{Field: "is_folder", Op: "eq", Value: true},
