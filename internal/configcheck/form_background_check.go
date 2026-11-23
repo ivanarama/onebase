@@ -26,6 +26,27 @@ func CheckFormBackground(proj *project.Project) []Issue {
 			return
 		}
 		walkFormElements(form.Elements, func(el *metadata.FormElement) {
+			if strings.TrimSpace(el.BorderColor) != "" {
+				if !metadata.FormElementSupportsBorderColor(el.Kind) {
+					warns = append(warns, Issue{
+						File:         label,
+						Object:       object,
+						Kind:         "Управляемая форма",
+						Code:         "form.background-kind",
+						Message:      fmt.Sprintf("элемент %q (%s): ключ border_color игнорируется — цвет рамки поддерживает только ПолеВвода", formElementName(el), el.Kind),
+						SuggestedFix: "Удалите ключ или перенесите его на ПолеВвода.",
+					})
+				} else if csssafe.Color(el.BorderColor) == "" {
+					warns = append(warns, Issue{
+						File:         label,
+						Object:       object,
+						Kind:         "Управляемая форма",
+						Code:         "form.background-color",
+						Message:      fmt.Sprintf("%s %q: border_color %q — не распознанный цвет, рамка останется обычной", el.Kind, formElementName(el), el.BorderColor),
+						SuggestedFix: "Допустимы hex (#rrggbb, #rgb), rgb(...) и именованные CSS-цвета.",
+					})
+				}
+			}
 			if strings.TrimSpace(el.Background) == "" {
 				return
 			}
@@ -35,7 +56,7 @@ func CheckFormBackground(proj *project.Project) []Issue {
 					Object:       object,
 					Kind:         "Управляемая форма",
 					Code:         "form.background-kind",
-					Message:      fmt.Sprintf("элемент %q (%s): ключ background игнорируется — фон поддерживают только ГруппаФормы и Кнопка", formElementName(el), el.Kind),
+					Message:      fmt.Sprintf("элемент %q (%s): ключ background игнорируется — фон поддерживают только ГруппаФормы, Кнопка и ПолеВвода", formElementName(el), el.Kind),
 					SuggestedFix: "Перенесите background на объемлющую ГруппаФормы или удалите ключ.",
 				})
 				return
