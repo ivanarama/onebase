@@ -1,0 +1,96 @@
+name: PR 2751 Windows test package
+
+'on':
+  push:
+    branches:
+      - experiment/pr-2751-windows-build
+
+permissions:
+  contents: read
+
+jobs:
+  windows-package:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      SOURCE_SHA: 080b08e4130a4f3cf81a864e21a32a9abd0972f1
+      BUILD_VER: pr-2751-080b08e4
+      GOTOOLCHAIN: local
+
+    steps:
+      - name: Check out launcher and instructions
+        uses: actions/checkout@v4
+        with:
+          path: packaging
+          sparse-checkout: tools/pr2751-package
+          persist-credentials: false
+
+      - name: Check out exact PR source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+          path: src
+          persist-credentials: false
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.11'
+          cache-dependency-path: src/go.sum
+
+      - name: Build binaries and collect their licenses
+        working-directory: src
+        shell: pwsh
+        env:
+          RELEASE_PUBLIC_KEY: ${{ vars.RELEASE_PUBLIC_KEY }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          if ((git rev-parse HEAD) -ne $env:SOURCE_SHA -or (git status --porcelain)) {
+            throw 'Expected a clean checkout of the PR source commit.'
+          }
+          if ((go env GOVERSION) -ne 'go1.26.11') {
+            throw 'Expected Go 1.26.11.'
+          }
+
+          $stage = Join-Path $env:RUNNER_TEMP 'onebase-package'
+          New-Item -ItemType Directory -Path $stage | Out-Null
+          $cli = Join-Path $stage 'onebase.exe'
+          $gui = Join-Path $stage 'onebase-gui.exe'
+          $ldflags = "-s -w -X github.com/ivantit66/onebase/internal/version.Build=$env:BUILD_VER"
+          $ldflags += " -X github.com/ivantit66/onebase/internal/selfupdate.PublicKey=$env:RELEASE_PUBLIC_KEY"
+          $ldflags += " -X github.com/ivantit66/onebase/internal/selfupdate.RequireSignature=1"
+
+          $env:CGO_ENABLED = '0'
+          go build -buildvcs=true "-ldflags=$ldflags" -o $cli ./cmd/onebase
+          $env:CGO_ENABLED = '1'
+          go build -buildvcs=true -tags webview "-ldflags=$ldflags -H windowsgui" -o $gui ./cmd/onebase
+
+          $licenses = Join-Path $env:RUNNER_TEMP 'license-bundle'
+          go run ./tools/licensebundle -release -out $licenses -version $env:BUILD_VER $cli $gui
+          Get-ChildItem -LiteralPath $licenses -Force | Copy-Item -Destination $stage -Recurse
+          $extras = Join-Path $env:GITHUB_WORKSPACE 'packaging/tools/pr2751-package'
+          Copy-Item -LiteralPath (Join-Path $extras 'Start.cmd'), (Join-Path $extras 'Как проверить.txt') -Destination $stage
+
+      - name: Check CLI and GUI versions
+        shell: pwsh
+        env:
+          ONEBASE_NO_GUI: '1'
+        run: |
+          $stage = Join-Path $env:RUNNER_TEMP 'onebase-package'
+          foreach ($name in 'onebase.exe', 'onebase-gui.exe') {
+            $output = Join-Path $env:RUNNER_TEMP "$name.version.txt"
+            $process = Start-Process -FilePath (Join-Path $stage $name) -ArgumentList '--version' -WorkingDirectory $env:RUNNER_TEMP -WindowStyle Hidden -RedirectStandardOutput $output -Wait -PassThru
+            $version = (Get-Content -LiteralPath $output -Raw).Trim()
+            if ($process.ExitCode -ne 0 -or $version -ne "onebase version $env:BUILD_VER") {
+              throw "$name returned exit code $($process.ExitCode) and version '$version'."
+            }
+            Write-Host "$name -> $version"
+          }
+
+      - name: Upload the unpacked kit
+        uses: actions/upload-artifact@v4
+        with:
+          name: OneBase-PR-2751-Windows-x64-080b08e4
+          path: ${{ runner.temp }}/onebase-package/
+          if-no-files-found: error
+          retention-days: 90
