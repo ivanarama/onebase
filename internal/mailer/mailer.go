@@ -170,9 +170,18 @@ func buildMsg(from, to, subject, textBody, htmlBody string) []byte {
 }
 
 func buildMsgWithFiles(from, to, subject, textBody, htmlBody string, files []interpreter.EmailAttachment) []byte {
+	return buildMsgFull(from, to, "", subject, textBody, htmlBody, files)
+}
+
+// buildMsgFull — письмо с необязательной копией (Cc): адресаты копии получают
+// письмо тем же SMTP-сеансом, а заголовок показывает их всем.
+func buildMsgFull(from, to, cc, subject, textBody, htmlBody string, files []interpreter.EmailAttachment) []byte {
 	var b strings.Builder
 	b.WriteString("From: " + stripHeaderControls(from) + "\r\n")
 	b.WriteString("To: " + stripHeaderControls(to) + "\r\n")
+	if cc != "" {
+		b.WriteString("Cc: " + stripHeaderControls(cc) + "\r\n")
+	}
 	b.WriteString("Subject: " + stripHeaderControls(subject) + "\r\n")
 	b.WriteString("MIME-Version: 1.0\r\n")
 

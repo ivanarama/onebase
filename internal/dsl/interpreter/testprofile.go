@@ -122,6 +122,23 @@ func (s *mockEmailSender) SendWithAttachments(to, subject, textBody, htmlBody st
 	return nil
 }
 
+// SendMessage записывает письмо с профилем/копией. Пароль профиля в запись не
+// попадает: тест видит только сервер и пользователя.
+func (s *mockEmailSender) SendMessage(profile *EmailProfile, msg EmailMessage) error {
+	fields := emailFields(strings.Join(msg.To, ", "), msg.Subject, msg.Text, msg.HTML, msg.Files)
+	fields["Копия"] = strings.Join(msg.Cc, ", ")
+	fields["Отправитель"] = msg.From
+	fields["ИмяОтправителя"] = msg.FromName
+	server := ""
+	if profile != nil {
+		server = profile.Host
+		fields["ПользовательПрофиля"] = profile.User
+	}
+	fields["СерверПрофиля"] = server
+	recordCall(s.arr, fields)
+	return nil
+}
+
 func emailFields(to, subject, text, html string, files []EmailAttachment) map[string]any {
 	names := &Array{}
 	for _, f := range files {
@@ -175,10 +192,9 @@ func (p *TestProfile) Vars() map[string]any {
 	// Почта: shorthand пишет запись напрямую; объект ПисьмоEmail строится из
 	// реального dslEmail с записывающим отправителем и nil-guard — так вся
 	// валидация и логика вложений остаётся настоящей.
-	sendEmail := BuiltinFunc(func(args []any, _ string, _ int) (any, error) {
-		recordCall(p.mock.email, emailFields(strArg(args, 0), strArg(args, 1), strArg(args, 2), "", nil))
-		return nil, nil
-	})
+	// Тот же ОтправитьПисьмо, что в рабочей среде (Параметры: Копия, HTML,
+	// Вложения, Профиль), только отправитель записывающий.
+	sendEmail := NewEmailFunctions(p.sender, nil)["ОтправитьПисьмо"]
 	emailFactory := func(args []any) any {
 		return &dslEmail{sender: p.sender, guard: nil}
 	}
