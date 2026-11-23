@@ -685,6 +685,20 @@ func TestIntegrationReviewReusesContentProofAndChecksOnlyBaseSyncDelta(t *testin
 	)
 }
 
+func TestFixContinuationRequiresCompleteLocalEvidenceAndFreshAdmission(t *testing.T) {
+	text := repositoryFile(t, ".claude", "skills", "fix-approved", "SKILL.md")
+	requireAllCompact(t, text,
+		"только опубликованный снимок, без повторного запуска сканирования",
+		"команда Source вернула окончательный `state=wait` или отказ, заверши попытку",
+		"получи штатный допуск FIX к тому же PR и актуальному решению",
+		"исходный HEAD PR, SHA базы, коммит и дерево кандидата, действующее решение и эпоху ревью",
+		"команду и флаги, окружение, версии инструментов, зависимости и входные данные",
+		"По исходным журналам инструмент должен подтвердить целостность, успешное завершение и полноту",
+		"неполном журнале, внешнем изменяемом входе или требовании свежего запуска выполни проверку заново",
+		"Перед каждым внешним изменением заново проверь действующие допуски Source, бюджета, точной цели и владельца",
+	)
+}
+
 func TestReviewDefaultsToTargetedTestsAndGatesFullSuite(t *testing.T) {
 	entry := repositoryFile(t, ".claude", "skills", "review-queue", "SKILL.md")
 	legacy := repositoryFile(t, ".claude", "skills", "review-queue", "references", "legacy-protocol.md")
