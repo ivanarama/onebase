@@ -14,6 +14,14 @@ import (
 	"github.com/ivantit66/onebase/internal/i18n/i18nerr"
 )
 
+func openDefaultBrowser(url string) error {
+	name := "xdg-open"
+	if runtime.GOOS == "darwin" {
+		name = "open"
+	}
+	return exec.Command(name, url).Start() //nolint:gosec // G204: fixed OS URL opener, no shell
+}
+
 // isolatedBrowserCommand строит команду запуска изолированного окна.
 // Linux — бинарь из PATH; macOS — через `open -na <app> --args`
 // (наличие приложения проверяет `open -Ra`, не запуская его).

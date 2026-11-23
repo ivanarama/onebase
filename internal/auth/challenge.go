@@ -52,6 +52,9 @@ type Challenge struct {
 	bindCode string
 	// ReturnURL — куда вернуть после успешного входа.
 	ReturnURL string
+	// windowsSID pins a Windows-initiated login to its original binding until
+	// the second factor is complete. It never comes from a client request.
+	windowsSID string
 	// Configurator: вход в конфигуратор лаунчера, а не в Предприятие.
 	Configurator bool
 	// BaseID — база лаунчера (для возврата в её конфигуратор).

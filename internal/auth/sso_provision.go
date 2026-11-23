@@ -36,6 +36,9 @@ func (r *Repo) UpsertSSOUser(ctx context.Context, p *OIDCProvider, claims map[st
 	if err != nil {
 		return nil, err
 	}
+	if user != nil && user.Disabled {
+		return nil, ErrAccountUnavailable
+	}
 	if user == nil {
 		// Связывание с существующей локальной учёткой по логину. Почта как
 		// логин связывается только подтверждённая: непроверенный email в чужом
@@ -45,6 +48,9 @@ func (r *Repo) UpsertSSOUser(ctx context.Context, p *OIDCProvider, claims map[st
 			return nil, lookupErr
 		}
 		if existing != nil {
+			if existing.Disabled {
+				return nil, ErrAccountUnavailable
+			}
 			if !ssoLinkAllowed(p, claims, login) {
 				return nil, fmt.Errorf("auth: провайдер не подтвердил владение %q — связывание с существующей учётной записью отклонено", login)
 			}
@@ -138,44 +144,28 @@ func claimBoolTrue(claims map[string]any, name string) bool {
 // GetByLogin возвращает пользователя по логину или (nil, nil), если такого нет.
 func (r *Repo) GetByLogin(ctx context.Context, login string) (*User, error) {
 	d := r.db.Dialect()
-	u := &User{}
-	var isAdmin, denyPasswd, showInList, aiData, createdAt any
-	q := fmt.Sprintf(`SELECT id, login, full_name, is_admin, deny_passwd_change, show_in_list, ai_data_access, lang, created_at
-		FROM _users WHERE lower(login) = lower(%s)`, d.Placeholder(1))
-	err := r.db.QueryRow(ctx, q, login).Scan(&u.ID, &u.Login, &u.FullName, &isAdmin, &denyPasswd, &showInList, &aiData, &u.Lang, &createdAt)
+	q := fmt.Sprintf(`SELECT `+userColumns+` FROM _users WHERE lower(login) = lower(%s)`, d.Placeholder(1))
+	u, err := scanUser(r.db.QueryRow(ctx, q, login))
 	if err != nil {
 		if storage.IsNotFound(err) {
 			return nil, nil
 		}
 		return nil, err
 	}
-	u.IsAdmin = scanBool(isAdmin)
-	u.DenyPasswdChange = scanBool(denyPasswd)
-	u.ShowInList = scanBool(showInList)
-	u.AIDataAccess = scanBool(aiData)
-	u.CreatedAt = scanTime(createdAt)
 	return u, nil
 }
 
 // userByAuthSubject ищет учётку, уже связанную с этим внешним пользователем.
 func (r *Repo) userByAuthSubject(ctx context.Context, providerID, subject string) (*User, error) {
 	d := r.db.Dialect()
-	u := &User{}
-	var isAdmin, denyPasswd, showInList, aiData, createdAt any
-	q := fmt.Sprintf(`SELECT id, login, full_name, is_admin, deny_passwd_change, show_in_list, ai_data_access, lang, created_at
-		FROM _users WHERE auth_provider = %s AND auth_subject = %s`, d.Placeholder(1), d.Placeholder(2))
-	err := r.db.QueryRow(ctx, q, providerID, subject).Scan(&u.ID, &u.Login, &u.FullName, &isAdmin, &denyPasswd, &showInList, &aiData, &u.Lang, &createdAt)
+	q := fmt.Sprintf(`SELECT `+userColumns+` FROM _users WHERE auth_provider = %s AND auth_subject = %s`, d.Placeholder(1), d.Placeholder(2))
+	u, err := scanUser(r.db.QueryRow(ctx, q, providerID, subject))
 	if err != nil {
 		if storage.IsNotFound(err) {
 			return nil, nil
 		}
 		return nil, err
 	}
-	u.IsAdmin = scanBool(isAdmin)
-	u.DenyPasswdChange = scanBool(denyPasswd)
-	u.ShowInList = scanBool(showInList)
-	u.AIDataAccess = scanBool(aiData)
-	u.CreatedAt = scanTime(createdAt)
 	return u, nil
 }
 

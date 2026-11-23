@@ -92,7 +92,7 @@ func (r *Repo) LookupAPIToken(ctx context.Context, raw string) (*User, error) {
 		SELECT t.id, t.expires_at, t.revoked_at, u.id, u.login, u.full_name, u.is_admin, u.deny_passwd_change, u.ai_data_access, u.lang
 		FROM _api_tokens t
 		JOIN _users u ON u.id = t.user_id
-		WHERE t.token_hash = %s
+		WHERE t.token_hash = %s AND NOT u.disabled
 	`, d.Placeholder(1))
 	var tokenID string
 	var expiresRaw, revokedRaw any

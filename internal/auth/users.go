@@ -22,6 +22,8 @@ type User struct {
 	Login            string
 	FullName         string
 	IsAdmin          bool
+	Disabled         bool
+	WindowsAccount   string `json:"-"` // display name shown in the administrator's user card
 	DenyPasswdChange bool
 	ShowInList       bool   // appears in reference pickers when true
 	AIDataAccess     bool   // can use AI chat data tools without being admin
@@ -70,7 +72,7 @@ const rolesCacheTTL = 60 * time.Second
 
 var (
 	ErrFirstUserMustBeAdmin = errors.New("первый пользователь должен быть администратором")
-	ErrLastAdmin            = errors.New("нельзя удалить или разжаловать последнего администратора")
+	ErrLastAdmin            = errors.New("нельзя отключить, удалить или разжаловать последнего администратора")
 	ErrLastUser             = errors.New("нельзя удалить последнего пользователя; авторизация должна отключаться отдельным действием")
 	// ErrUserReferenced — на учётную запись ссылаются объекты базы через
 	// реквизиты типа reference:_users (#1646); удалению мешает внешний ключ.
@@ -147,11 +149,19 @@ func (r *Repo) EnsureSchema(ctx context.Context) error {
 		{"deny_passwd_change", d.TypeBool() + " NOT NULL DEFAULT " + boolFalseFor(d)},
 		{"show_in_list", d.TypeBool() + " NOT NULL DEFAULT " + boolFalseFor(d)},
 		{"lang", "TEXT NOT NULL DEFAULT ''"},
+		{"disabled", d.TypeBool() + " NOT NULL DEFAULT " + boolFalseFor(d)},
+		{"windows_account", "TEXT NOT NULL DEFAULT ''"},
+		{"windows_sid", "TEXT"},
 		{"ai_data_access", d.TypeBool() + " NOT NULL DEFAULT " + boolFalseFor(d)},
 	} {
 		if err := r.db.AddColumnIfMissing(ctx, "_users", c.col, c.typ); err != nil {
 			return fmt.Errorf("auth: migrate _users.%s: %w", c.col, err)
 		}
+	}
+	// Unbound users have a NULL SID. Enforce one-to-one bindings even when
+	// administrators update two cards concurrently.
+	if _, err := r.db.Exec(ctx, `CREATE UNIQUE INDEX IF NOT EXISTS ix_users_windows_sid ON _users(windows_sid)`); err != nil {
+		return fmt.Errorf("auth: index _users.windows_sid: %w", err)
 	}
 	// Мультисессии (план 78): служебные метаданные сессии. Колонки nullable без
 	// DEFAULT — SQLite не разрешает ни UNIQUE, ни CURRENT_TIMESTAMP в ADD COLUMN;
@@ -209,7 +219,7 @@ func (r *Repo) ListForSelection(ctx context.Context) ([]*User, error) {
 }
 
 func (r *Repo) listWhere(ctx context.Context, where string) ([]*User, error) {
-	q := `SELECT id, login, full_name, is_admin, deny_passwd_change, show_in_list, ai_data_access, lang, created_at FROM _users ` + where + ` ORDER BY login`
+	q := `SELECT ` + userColumns + ` FROM _users ` + where + ` ORDER BY login`
 	rows, err := r.db.Query(ctx, q)
 	if err != nil {
 		return nil, err
@@ -217,16 +227,10 @@ func (r *Repo) listWhere(ctx context.Context, where string) ([]*User, error) {
 	defer rows.Close()
 	var users []*User
 	for rows.Next() {
-		u := &User{}
-		var isAdmin, denyPasswd, showInList, aiData, createdAt any
-		if err := rows.Scan(&u.ID, &u.Login, &u.FullName, &isAdmin, &denyPasswd, &showInList, &aiData, &u.Lang, &createdAt); err != nil {
+		u, err := scanUser(rows)
+		if err != nil {
 			return nil, err
 		}
-		u.IsAdmin = scanBool(isAdmin)
-		u.DenyPasswdChange = scanBool(denyPasswd)
-		u.ShowInList = scanBool(showInList)
-		u.AIDataAccess = scanBool(aiData)
-		u.CreatedAt = scanTime(createdAt)
 		users = append(users, u)
 	}
 	return users, nil
@@ -234,17 +238,18 @@ func (r *Repo) listWhere(ctx context.Context, where string) ([]*User, error) {
 
 // GetByID returns a single user by ID.
 func (r *Repo) GetByID(ctx context.Context, userID string) (*User, error) {
-	d := r.db.Dialect()
+	return scanUser(r.db.QueryRow(ctx, `SELECT `+userColumns+` FROM _users WHERE id = `+r.db.Dialect().Placeholder(1), userID))
+}
+
+const userColumns = `id, login, full_name, is_admin, deny_passwd_change, show_in_list, ai_data_access, lang, created_at, disabled, windows_account`
+
+func scanUser(row storage.Row) (*User, error) {
 	u := &User{}
-	var isAdmin, denyPasswd, showInList, aiData, createdAt any
-	q := fmt.Sprintf(`SELECT id, login, full_name, is_admin, deny_passwd_change, show_in_list, ai_data_access, lang, created_at FROM _users WHERE id = %s`, d.Placeholder(1))
-	if err := r.db.QueryRow(ctx, q, userID).Scan(&u.ID, &u.Login, &u.FullName, &isAdmin, &denyPasswd, &showInList, &aiData, &u.Lang, &createdAt); err != nil {
+	var createdAt any
+	if err := row.Scan(&u.ID, &u.Login, &u.FullName, &u.IsAdmin, &u.DenyPasswdChange, &u.ShowInList,
+		&u.AIDataAccess, &u.Lang, &createdAt, &u.Disabled, &u.WindowsAccount); err != nil {
 		return nil, err
 	}
-	u.IsAdmin = scanBool(isAdmin)
-	u.DenyPasswdChange = scanBool(denyPasswd)
-	u.ShowInList = scanBool(showInList)
-	u.AIDataAccess = scanBool(aiData)
 	u.CreatedAt = scanTime(createdAt)
 	return u, nil
 }
@@ -254,7 +259,7 @@ func (r *Repo) Update(ctx context.Context, userID, fullName string, isAdmin, den
 	return r.withUserInvariantLock(ctx, func(txCtx context.Context) error {
 		d := r.db.Dialect()
 		var currentAdmin any
-		qCurrent := fmt.Sprintf(`SELECT is_admin FROM _users WHERE id = %s`, d.Placeholder(1))
+		qCurrent := fmt.Sprintf(`SELECT is_admin AND NOT disabled FROM _users WHERE id = %s`, d.Placeholder(1))
 		if err := r.db.QueryRow(txCtx, qCurrent, userID).Scan(&currentAdmin); err != nil {
 			return err
 		}
@@ -371,7 +376,7 @@ func (r *Repo) Delete(ctx context.Context, id string) error {
 	return r.withUserInvariantLock(ctx, func(txCtx context.Context) error {
 		d := r.db.Dialect()
 		var targetAdmin any
-		qTarget := fmt.Sprintf(`SELECT is_admin FROM _users WHERE id = %s`, d.Placeholder(1))
+		qTarget := fmt.Sprintf(`SELECT is_admin AND NOT disabled FROM _users WHERE id = %s`, d.Placeholder(1))
 		if err := r.db.QueryRow(txCtx, qTarget, id).Scan(&targetAdmin); err != nil {
 			return err
 		}
@@ -415,7 +420,7 @@ func (r *Repo) withUserInvariantLock(ctx context.Context, fn func(context.Contex
 
 func (r *Repo) adminCount(ctx context.Context) (int, error) {
 	var count int
-	q := fmt.Sprintf(`SELECT count(*) FROM _users WHERE is_admin = %s`, r.db.Dialect().Placeholder(1))
+	q := fmt.Sprintf(`SELECT count(*) FROM _users WHERE is_admin = %s AND NOT disabled`, r.db.Dialect().Placeholder(1))
 	err := r.db.QueryRow(ctx, q, true).Scan(&count)
 	return count, err
 }
@@ -424,7 +429,7 @@ func (r *Repo) Authenticate(ctx context.Context, login, password string) (*User,
 	d := r.db.Dialect()
 	u := &User{}
 	var hash []byte
-	q := fmt.Sprintf(`SELECT id, login, password_hash, full_name, is_admin FROM _users WHERE login = %s`, d.Placeholder(1))
+	q := fmt.Sprintf(`SELECT id, login, password_hash, full_name, is_admin FROM _users WHERE NOT disabled AND login = %s`, d.Placeholder(1))
 	err := r.db.QueryRow(ctx, q, login).Scan(&u.ID, &u.Login, &hash, &u.FullName, &u.IsAdmin)
 	if err != nil {
 		return nil, fmt.Errorf("auth: user not found")
@@ -454,6 +459,10 @@ type SessionMeta struct {
 // ограничен TTL. Опциональная политика «максимум сессий на пользователя»
 // (п. 1.6) может вытеснить старейшую enterprise-сессию.
 func (r *Repo) CreateSession(ctx context.Context, userID string, meta SessionMeta) (string, error) {
+	return r.createSession(ctx, userID, "", meta)
+}
+
+func (r *Repo) createSession(ctx context.Context, userID, windowsSID string, meta SessionMeta) (string, error) {
 	d := r.db.Dialect()
 	// Уборка истёкших — попутная housekeeping-операция перед выдачей новой
 	// сессии. Её сбой не должен мешать входу: пользователь войдёт, а таблица
@@ -462,10 +471,6 @@ func (r *Repo) CreateSession(ctx context.Context, userID string, meta SessionMet
 	if err := r.DeleteExpiredSessions(ctx); err != nil {
 		authLog().Warn("не удалось подчистить истёкшие сессии", "err", err)
 	}
-	if meta.Kind == SessionKindEnterprise {
-		r.enforceSessionLimit(ctx, userID, meta)
-	}
-
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
 		return "", err
@@ -475,11 +480,30 @@ func (r *Repo) CreateSession(ctx context.Context, userID string, meta SessionMet
 	now := time.Now()
 	expires := now.Add(24 * time.Hour)
 	q := fmt.Sprintf(`INSERT INTO _sessions (token, token_hash, user_id, expires_at, public_id, kind, created_at, last_seen_at, ip, user_agent)
-		VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)`,
+		SELECT %s, %s, id, %s, %s, %s, %s, %s, %s, %s FROM _users WHERE id = %s AND NOT disabled`,
 		d.Placeholder(1), d.Placeholder(2), d.Placeholder(3), d.Placeholder(4), d.Placeholder(5),
 		d.Placeholder(6), d.Placeholder(7), d.Placeholder(8), d.Placeholder(9), d.Placeholder(10))
-	_, err := r.db.Exec(ctx, q, tokenHash, tokenHash, userID, expires, uuid.New().String(), meta.Kind, now, now, meta.IP, meta.UserAgent)
-	return token, err
+	args := []any{tokenHash, tokenHash, expires, uuid.New().String(), meta.Kind, now, now, meta.IP, meta.UserAgent, userID}
+	if windowsSID != "" {
+		q += " AND windows_sid = " + d.Placeholder(11)
+		args = append(args, windowsSID)
+	}
+	// Serialize issuance with a concurrent disable/unlink. SQLite already
+	// serializes writers for this INSERT.
+	if d.Name() == "postgres" {
+		q += " FOR SHARE"
+	}
+	result, err := r.db.Exec(ctx, q, args...)
+	if err != nil {
+		return "", err
+	}
+	if result.RowsAffected != 1 {
+		return "", ErrAccountUnavailable
+	}
+	if meta.Kind == SessionKindEnterprise {
+		r.enforceSessionLimit(ctx, userID, meta)
+	}
+	return token, nil
 }
 
 const sessionTokenHashPrefix = "sha256:"
@@ -542,21 +566,14 @@ func (r *Repo) enforceSessionLimit(ctx context.Context, userID string, meta Sess
 		return
 	}
 	d := r.db.Dialect()
-	var count int
-	q := fmt.Sprintf(`SELECT count(*) FROM _sessions WHERE user_id = %s AND kind = %s AND expires_at > %s`,
-		d.Placeholder(1), d.Placeholder(2), d.Now())
-	if err := r.db.QueryRow(ctx, q, userID, SessionKindEnterprise).Scan(&count); err != nil {
-		return
-	}
-	excess := count - limit + 1 // +1: новая сессия должна поместиться в лимит
-	if excess <= 0 {
-		return
-	}
-	delQ := fmt.Sprintf(`DELETE FROM _sessions WHERE token IN (
-		SELECT token FROM _sessions WHERE user_id = %s AND kind = %s
-		ORDER BY COALESCE(last_seen_at, created_at, expires_at) ASC LIMIT %s)`,
-		d.Placeholder(1), d.Placeholder(2), d.Placeholder(3))
-	if _, err := r.db.Exec(ctx, delQ, userID, SessionKindEnterprise, excess); err != nil {
+	// Keep the most recently active sessions in a single statement. This runs
+	// after successful issuance so a rejected login cannot evict a live session.
+	delQ := fmt.Sprintf(`DELETE FROM _sessions WHERE user_id = %s AND kind = %s AND token NOT IN (
+		SELECT token FROM _sessions WHERE user_id = %s AND kind = %s AND expires_at > %s
+		ORDER BY COALESCE(last_seen_at, created_at, expires_at) DESC, created_at DESC, token DESC LIMIT %s)`,
+		d.Placeholder(1), d.Placeholder(2), d.Placeholder(3), d.Placeholder(4), d.Now(), d.Placeholder(5))
+	result, err := r.db.Exec(ctx, delQ, userID, SessionKindEnterprise, userID, SessionKindEnterprise, limit)
+	if err != nil || result.RowsAffected == 0 {
 		return
 	}
 	// Аудит вытеснения — актор сам пользователь: это его новый вход. Логин нужен
@@ -631,7 +648,7 @@ func (r *Repo) lookupSession(ctx context.Context, token, kind string, requireKin
 	q := fmt.Sprintf(`
 		SELECT u.id, u.login, u.full_name, u.is_admin, u.deny_passwd_change, u.ai_data_access, u.lang
 		FROM _sessions s JOIN _users u ON u.id = s.user_id
-		WHERE s.token_hash = %s AND s.expires_at > %s
+		WHERE s.token_hash = %s AND s.expires_at > %s AND NOT u.disabled
 	`, d.Placeholder(1), d.Now())
 	args := []any{sessionTokenHash(token)}
 	if requireKind {

@@ -105,13 +105,15 @@ func New(reg *runtime.Registry, store *storage.DB, interp *interpreter.Interpret
 		AppName: cfg.AppName,
 		// Внешний адрес для redirect_uri провайдера SSO: за обратным прокси
 		// Host запроса не совпадает с публичным адресом.
-		BaseURL: publicURL,
+		BaseURL:    publicURL,
+		WindowsSPN: strings.TrimSpace(os.Getenv("ONEBASE_WINDOWS_SPN")),
 	}
 	r.Get("/login", authH.LoginPage)
 	r.Post("/login", authH.LoginSubmit)
 	r.Post("/logout", authH.Logout)
 	r.Get("/auth/status", authH.Status)
 	r.Post("/auth/login", authH.LoginJSON)
+	r.Get("/auth/windows", authH.WindowsLogin)
 	r.Get("/auth/bootstrap", authH.Bootstrap)
 	// Второй фактор (план 84): шаг между паролем и сессией.
 	r.Get("/login/2fa", authH.TwoFactorPage)
@@ -134,6 +136,7 @@ func New(reg *runtime.Registry, store *storage.DB, interp *interpreter.Interpret
 	// HMAC, а stop подписан для конкретного instance процесса. Debug bearer
 	// намеренно отдельный и живёт только в запустившем launcher-процессе.
 	if controlToken != "" && baseID != "" && processInstanceErr == nil {
+		authH.MountLocalWindowsLogin(r, controlToken, baseID, processInstance, processcontrol.CurrentWindowsSID())
 		r.Route("/debug/process", func(r chi.Router) {
 			r.Get("/identity", func(w http.ResponseWriter, req *http.Request) {
 				challenge := req.URL.Query().Get(processcontrol.ChallengeQuery)

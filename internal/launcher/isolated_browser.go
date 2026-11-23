@@ -27,6 +27,7 @@ const (
 	isolatedModeAuto    = "auto"
 	isolatedModeNative  = "native"
 	isolatedModeBrowser = "browser"
+	defaultBrowserMode  = "default"
 )
 
 // isolatedBrowser абстрагирует запуск изолированного окна; в тестах
@@ -49,6 +50,9 @@ func NativeIsolatedSupported() bool { return nativeIsolatedSupported() }
 type systemBrowser struct{}
 
 func (systemBrowser) Open(profileDir, url, mode string) error {
+	if mode == defaultBrowserMode {
+		return openDefaultBrowser(url)
+	}
 	if mode == "" {
 		mode = isolatedModeAuto
 	}

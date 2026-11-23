@@ -89,7 +89,33 @@ input:focus,select:focus{border-color:#1a5fa8;box-shadow:0 0 0 2px rgba(26,95,16
   {{if .PasswordLogin}}<div class="sep"><span>или</span></div>{{end}}
   {{range .Providers}}<a class="btn btn-sso" href="/auth/oidc/{{.ID}}/start{{$.ReturnQuery}}">Войти через {{.Name}}</a>{{end}}
   {{end}}
-  {{if and (not .PasswordLogin) (not .Providers)}}
+  {{if .WindowsLogin}}
+  <button class="btn btn-sso" type="button" id="windows-login" data-url="/auth/windows{{.ReturnQuery}}" data-auto="{{.AutoWindowsLogin}}">Войти через Windows</button>
+  <div class="err" id="windows-error" role="status" hidden>Вход через Windows не удался. Проверьте привязку учётной записи у администратора.</div>
+  <script>
+  (function () {
+    var button = document.getElementById('windows-login');
+    var error = document.getElementById('windows-error');
+    async function signIn() {
+      button.disabled = true;
+      try {
+        var result = await fetch(button.dataset.url, {credentials:'same-origin', redirect:'error', cache:'no-store', headers:{'X-OneBase-Windows':'1'}});
+        if (!result.ok) throw new Error();
+        var data = await result.json();
+        var target = new URL(data.redirect, location.origin);
+        if (target.origin !== location.origin) throw new Error();
+        location.replace(target.href);
+      } catch (_) {
+        error.hidden = false;
+        button.disabled = false;
+      }
+    }
+    button.addEventListener('click', signIn);
+    if (button.dataset.auto === 'true') signIn();
+  })();
+  </script>
+  {{end}}
+  {{if and (not .PasswordLogin) (not .Providers) (not .WindowsLogin)}}
   <div class="err">Вход по паролю запрещён политикой, а провайдеры единого входа не настроены. Обратитесь к администратору базы.</div>
   {{end}}
 </div>
@@ -117,6 +143,8 @@ type Handlers struct {
 	// BaseURL — внешний адрес базы для redirect_uri провайдера
 	// (https://erp.example.com). Пусто → адрес собирается из запроса.
 	BaseURL string
+	// WindowsSPN is the HTTP service principal registered for shared Windows login.
+	WindowsSPN string
 }
 
 // sessionMetaFromRequest собирает мету сессии пользовательского режима.
@@ -183,10 +211,14 @@ func (h *Handlers) loginPageData(r *http.Request, errMsg string) map[string]any 
 	var users []*User
 	var providers []*OIDCProvider
 	passwordLogin := true
+	windowsLogin := false
 	if h.Repo != nil {
 		users, _ = h.Repo.ListForSelection(r.Context())
 		providers = h.Repo.EnabledAuthProviders(r.Context())
 		passwordLogin = h.Repo.AuthPolicy(r.Context()).PasswordLoginAllowed()
+		if h.WindowsLoginAvailable(r) {
+			windowsLogin, _ = h.Repo.HasWindowsAccounts(r.Context())
+		}
 	}
 	returnQuery := ""
 	if ret := r.URL.Query().Get("return"); ret != "" && isLocalURL(ret) {
@@ -197,8 +229,11 @@ func (h *Handlers) loginPageData(r *http.Request, errMsg string) map[string]any 
 		"Users":         users,
 		"Providers":     providers,
 		"PasswordLogin": passwordLogin,
-		"ReturnQuery":   returnQuery,
-		"UserPickerJS":  loginUserPickerScript,
+		"WindowsLogin":  windowsLogin,
+		// Protected pages supply return; /login after logout remains a manual choice.
+		"AutoWindowsLogin": windowsLogin && returnQuery != "" && r.Method == http.MethodGet && errMsg == "",
+		"ReturnQuery":      returnQuery,
+		"UserPickerJS":     loginUserPickerScript,
 	}
 }
 

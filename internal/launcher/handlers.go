@@ -802,6 +802,18 @@ func (h *handler) start(w http.ResponseWriter, r *http.Request) {
 	if !h.ensureBaseReady(w, r, b, resolveLang(r)) {
 		return
 	}
+	// Existing clients (including the configurator) request only the public
+	// base URL. The Enterprise button can also ask us to open a private URL.
+	if r.URL.Query().Get("open") == "enterprise" {
+		if target := h.localWindowsURL(r.Context(), b); target != "" {
+			if err := h.isoBrowser.Open("", target, defaultBrowserMode); err != nil {
+				writeJSON(w, 500, map[string]any{"error": errText(r, err)})
+				return
+			}
+			writeJSON(w, 200, h.startResult(r, b, map[string]any{"opened": true}))
+			return
+		}
+	}
 	writeJSON(w, 200, h.startResult(r, b, map[string]any{"url": h.runner.BaseURL(b)}))
 }
 
@@ -821,7 +833,11 @@ func (h *handler) startNative(w http.ResponseWriter, r *http.Request) {
 	if !h.ensureBaseReady(w, r, b, resolveLang(r)) {
 		return
 	}
-	if err := h.isoBrowser.Open("", h.runner.BaseURL(b), isolatedModeNative); err != nil {
+	target := h.localWindowsURL(r.Context(), b)
+	if target == "" {
+		target = h.runner.BaseURL(b)
+	}
+	if err := h.isoBrowser.Open("", target, isolatedModeNative); err != nil {
 		writeJSON(w, 500, map[string]any{"error": errText(r, err)})
 		return
 	}

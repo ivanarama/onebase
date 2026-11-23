@@ -168,7 +168,7 @@ func (r *Repo) twoFactorLockoutRisk(ctx context.Context, p Policy, excludeUserID
 	// Администраторы — невосстановимый случай: если заперты они, выдать код
 	// привязки некому вообще. (Роли админ ещё мог бы разлочить, будь он в базе.)
 	if p.Require2FAAdmins {
-		total, err := r.countUsers(ctx, "WHERE is_admin")
+		total, err := r.countUsers(ctx, "WHERE NOT disabled AND is_admin")
 		if err != nil {
 			return "", err
 		}
@@ -206,12 +206,12 @@ func (r *Repo) twoFactorLockoutRisk(ctx context.Context, p Policy, excludeUserID
 // вычитается из подсчёта: так проверяется «что будет, если снять фактор у него».
 func (r *Repo) countBoundAdmins(ctx context.Context, excludeUserID string) (int, error) {
 	if excludeUserID == "" {
-		return r.countUsers(ctx, "WHERE is_admin AND totp_enabled")
+		return r.countUsers(ctx, "WHERE NOT disabled AND is_admin AND totp_enabled")
 	}
 	d := r.db.Dialect()
 	var n int
 	err := r.db.QueryRow(ctx,
-		`SELECT COUNT(*) FROM _users WHERE is_admin AND totp_enabled AND id <> `+d.Placeholder(1),
+		`SELECT COUNT(*) FROM _users WHERE NOT disabled AND is_admin AND totp_enabled AND id <> `+d.Placeholder(1),
 		excludeUserID).Scan(&n)
 	return n, err
 }
@@ -226,7 +226,7 @@ func (r *Repo) countBoundRoleMembers(ctx context.Context, roleName, excludeUserI
 	err := r.db.QueryRow(ctx, `SELECT COUNT(*) FROM _users u
 		JOIN _user_roles ur ON ur.user_id = u.id
 		JOIN _roles rl ON rl.id = ur.role_id
-		WHERE rl.name = `+d.Placeholder(1)+` AND u.totp_enabled AND u.id <> `+d.Placeholder(2),
+		WHERE NOT u.disabled AND rl.name = `+d.Placeholder(1)+` AND u.totp_enabled AND u.id <> `+d.Placeholder(2),
 		roleName, excludeUserID).Scan(&n)
 	return n, err
 }
@@ -244,7 +244,7 @@ func (r *Repo) countRoleMembers(ctx context.Context, roleName string, withTOTP b
 	q := `SELECT COUNT(*) FROM _users u
 		JOIN _user_roles ur ON ur.user_id = u.id
 		JOIN _roles rl ON rl.id = ur.role_id
-		WHERE rl.name = ` + d.Placeholder(1)
+		WHERE NOT u.disabled AND rl.name = ` + d.Placeholder(1)
 	if withTOTP {
 		q += ` AND u.totp_enabled`
 	}

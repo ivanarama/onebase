@@ -6,6 +6,7 @@ import (
 	"html/template"
 	"net/http"
 	"net/url"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -102,6 +103,33 @@ const tplAdminUserCard = `{{define "admin-user-card"}}` + adminHead + `
   <button class="btn btn-primary" type="submit">Сохранить</button>
 </form>
 </div>
+
+<div class="card" style="max-width:560px;margin-bottom:16px">
+<h3 style="margin-bottom:16px">{{.DatabaseAccessLabel}}</h3>
+<form method="POST">
+  <input type="hidden" name="action" value="account_status">
+  <div class="form-group">
+    <label><input type="checkbox" name="disabled" value="1" {{if .User.Disabled}}checked{{end}}> {{.DisabledLabel}}</label>
+  </div>
+  <button class="btn btn-primary" type="submit">{{.SaveStatusLabel}}</button>
+</form>
+</div>
+
+{{if or .WindowsHost .User.WindowsAccount}}
+<div class="card" style="max-width:560px;margin-bottom:16px">
+<form method="POST">
+  <input type="hidden" name="action" value="windows_account">
+  <div class="form-group">
+    <label><input type="checkbox" name="windows_enabled" value="1" {{if .User.WindowsAccount}}checked{{end}}> {{.WindowsAuthLabel}}</label>
+  </div>
+  <div class="form-group">
+    <label for="windows_account">{{.WindowsAccountLabel}}</label>
+    <input id="windows_account" name="windows_account" type="text" placeholder="ДОМЕН\пользователь" value="{{.User.WindowsAccount}}">
+  </div>
+  <button class="btn btn-primary" type="submit">{{.SaveBindingLabel}}</button>
+</form>
+</div>
+{{end}}
 
 <div class="card" style="max-width:560px;margin-bottom:16px">
 <h3 style="margin-bottom:16px">Второй фактор</h3>
@@ -259,7 +287,15 @@ func (s *Server) adminUserCard(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, s.tr(lang, "Пользователь не найден"), 404)
 		return
 	}
-	data := map[string]any{"User": u}
+	data := map[string]any{
+		"User": u, "WindowsHost": runtime.GOOS == "windows",
+		"DatabaseAccessLabel": s.tr(lang, "Доступ к базе"),
+		"DisabledLabel":       s.tr(lang, "Учётная запись отключена"),
+		"SaveStatusLabel":     s.tr(lang, "Сохранить состояние"),
+		"WindowsAuthLabel":    s.tr(lang, "Аутентификация Windows"),
+		"WindowsAccountLabel": s.tr(lang, "Учётная запись Windows"),
+		"SaveBindingLabel":    s.tr(lang, "Сохранить привязку"),
+	}
 	s.addPasswordPolicyData(r.Context(), data)
 	data["BindTicketTTLHours"] = int(auth.BindTicketTTL / time.Hour)
 	if info, infoErr := s.authRepo.TwoFactorInfoFor(r.Context(), userID); infoErr == nil {
@@ -281,6 +317,36 @@ func (s *Server) adminUserCard(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		switch r.FormValue("action") {
+		case "windows_account":
+			account := ""
+			if r.PostFormValue("windows_enabled") == "1" {
+				account = strings.TrimSpace(r.PostFormValue("windows_account"))
+				if account == "" {
+					data["Error"] = s.tr(lang, "Введите учётную запись Windows")
+					break
+				}
+			}
+			if err := s.authRepo.SetWindowsAccount(r.Context(), userID, account); err != nil {
+				data["Error"] = s.errText(r, err)
+			} else {
+				s.logSessionAudit(r, "windows_binding_changed", u.Login, userID)
+				updated, err := s.authRepo.GetByID(r.Context(), userID)
+				if err != nil {
+					s.serverError(w, r, err)
+					return
+				}
+				data["User"] = updated
+				data["Success"] = s.tr(lang, "Привязка Windows сохранена")
+			}
+		case "account_status":
+			disabled := r.PostFormValue("disabled") == "1"
+			if err := s.authRepo.SetDisabled(r.Context(), userID, disabled); err != nil {
+				data["Error"] = s.errText(r, err)
+			} else {
+				u.Disabled = disabled
+				s.logSessionAudit(r, "account_status_changed", u.Login, userID)
+				data["Success"] = s.tr(lang, "Состояние учётной записи сохранено")
+			}
 		case "update":
 			fullName := r.FormValue("full_name")
 			isAdmin := r.FormValue("is_admin") == "1"

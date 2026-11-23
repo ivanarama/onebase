@@ -5,6 +5,7 @@ package launcher
 import (
 	"os"
 	"os/exec"
+	"strings"
 )
 
 // nativeIsolatedSupported: нативные WebView2-окна доступны в GUI-сборке под
@@ -23,7 +24,10 @@ func nativeIsolatedCommand(profileDir, url string) (*exec.Cmd, bool) {
 	if err != nil {
 		return nil, false
 	}
-	cmd := exec.Command(exe, "window", "--url", url, "--title", "onebase — Предприятие")
+	// Pass the target privately: a Windows-login URL carries a one-time code
+	// and command lines may be recorded for the lifetime of the child process.
+	cmd := exec.Command(exe, "window", "--url", "-", "--title", "onebase — Предприятие")
+	cmd.Stdin = strings.NewReader(url)
 	cmd.Env = environmentWithout(os.Environ(), "ONEBASE_WEBVIEW_PROFILE")
 	if profileDir != "" {
 		cmd.Env = append(cmd.Env, "ONEBASE_WEBVIEW_PROFILE="+profileDir)
