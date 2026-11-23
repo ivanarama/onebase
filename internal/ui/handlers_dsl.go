@@ -57,9 +57,15 @@ func withLang(ctx context.Context, lang string) context.Context {
 func dslCurrentUserObject(ctx context.Context) (*interpreter.MapThis, string) {
 	var id, login, fullName string
 	var admin bool
+	roles := []any{}
 	ref := &interpreter.Ref{Type: metadata.SystemUsersEntity}
 	if u := auth.UserFromContext(ctx); u != nil {
 		id, login, fullName, admin = u.ID, u.Login, u.FullName, u.IsAdmin
+		for _, role := range u.Roles {
+			if role != nil {
+				roles = append(roles, role.Name)
+			}
+		}
 		label := u.FullName
 		if label == "" {
 			label = u.Login
@@ -68,9 +74,9 @@ func dslCurrentUserObject(ctx context.Context) (*interpreter.MapThis, string) {
 	}
 	return &interpreter.MapThis{M: map[string]any{
 		"ИД": id, "Имя": login, "ПолноеИмя": fullName, "Админ": admin,
-		"Ссылка": ref,
-		"ID":     id, "Login": login, "FullName": fullName, "IsAdmin": admin,
-		"Ref": ref,
+		"Ссылка": ref, "Роли": roles,
+		"ID": id, "Login": login, "FullName": fullName, "IsAdmin": admin,
+		"Ref": ref, "Roles": roles,
 	}}, login
 }
 

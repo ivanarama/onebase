@@ -62,6 +62,27 @@ func SetAddressCityFunc(fn func(string) string) {
 	}
 }
 
+// FieldDiscloseDenied reports an explicit disclosure restriction. Like field
+// reads, the least restrictive reading role wins; absent policies preserve the
+// existing contract. This does not grant object-level disclose permission.
+func FieldDiscloseDenied(u *auth.User, kind, entity, field string) bool {
+	if u == nil || (u.IsAdmin && !MaskAdmin()) {
+		return false
+	}
+	reading := false
+	for _, role := range u.Roles {
+		if role == nil || !auth.PermissionHas(role.Permissions, kind, entity, "read") {
+			continue
+		}
+		reading = true
+		policy, ok := lookupFieldPolicy(role.Permissions.FieldAccess.Policies(kind, entity), fieldKey(field))
+		if !ok || policy.Disclose == nil || *policy.Disclose {
+			return false
+		}
+	}
+	return reading
+}
+
 // FieldDecisions returns effective masking decisions per field for reading
 // entity. Only fields that must be masked or hidden appear in the result; a nil
 // or empty map means every field is returned in full. A nil user (no auth) or

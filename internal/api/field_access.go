@@ -141,6 +141,10 @@ func (h *handler) discloseField(kind metadata.Kind) http.HandlerFunc {
 		dec, masked := h.fieldDecisions(r.Context(), entity)[field.Name]
 
 		if parseReportBool(r.URL.Query().Get("disclose")) {
+			if access.FieldDiscloseDenied(auth.UserFromContext(r.Context()), string(kind), entityName, field.Name) {
+				writeError(w, http.StatusForbidden, "forbidden", "", 0)
+				return
+			}
 			reason := strings.TrimSpace(r.URL.Query().Get("reason"))
 			if masked {
 				if !canREST(r.Context(), string(kind), entityName, "disclose") {

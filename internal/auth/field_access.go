@@ -28,6 +28,9 @@ type FieldPolicies map[string]FieldPolicy
 type FieldPolicy struct {
 	Read string `yaml:"read,omitempty" json:"read,omitempty"`
 	Keep int    `yaml:"keep,omitempty" json:"keep,omitempty"`
+	// Disclose=false forbids revealing this field even with object-level
+	// disclose. nil preserves the existing disclosure contract.
+	Disclose *bool `yaml:"disclose,omitempty" json:"disclose,omitempty"`
 }
 
 // Policies returns the field policies declared for (kind, entity), or nil.
