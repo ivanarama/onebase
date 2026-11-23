@@ -714,6 +714,16 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			}
 			return template.CSS(b.String()) //nolint:gosec // G203: склеиваются только значения template.CSS из функций выше
 		},
+		// tableHeaderClass / tableHeaderVars — фон и граница шапки таблицы
+		// (header_background, header_border_color): классы и CSS-переменные.
+		"tableHeaderClass": func(el *metadata.FormElement) string {
+			classes, _ := metadata.FormTableHeaderColors(el)
+			return classes
+		},
+		"tableHeaderVars": func(el *metadata.FormElement) template.CSS {
+			_, vars := metadata.FormTableHeaderColors(el)
+			return template.CSS(vars) //nolint:gosec // G203: цвета прошли csssafe.Color, иначе пустая строка
+		},
 		"elFill": func(el *metadata.FormElement) bool {
 			return metadata.FormElementFillsHeight(el)
 		},

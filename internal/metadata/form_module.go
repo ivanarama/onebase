@@ -241,7 +241,12 @@ type FormElement struct {
 	// заданы оба, text_color сильнее. См. FormElementTextColorCSS.
 	TextColor  string `yaml:"text_color,omitempty"`
 	Importance string `yaml:"importance,omitempty"`
-	ReadOnly   bool   `yaml:"readonly,omitempty"` // только чтение
+	// HeaderBackground / HeaderBorderColor — фон и цвет границы шапки таблицы
+	// ТабличнаяЧасть: на цветном фоне формы шапка иначе сливается со строками.
+	// Цвета проверяет csssafe.Color.
+	HeaderBackground  string `yaml:"header_background,omitempty"`
+	HeaderBorderColor string `yaml:"header_border_color,omitempty"`
+	ReadOnly          bool   `yaml:"readonly,omitempty"` // только чтение
 	// EditableAdminOnly — поле редактирует только администратор, остальным оно
 	// нередактируемо всегда. В отличие от ReadOnlyWhen условие тут не от данных
 	// записи, а от того, кто смотрит, поэтому вычисляется на сервере при
@@ -827,11 +832,31 @@ type FormListCondition struct {
 	// &ТекущийПользователь (идентификатор учётки) и &ТекущийЛогин подставляются
 	// сами; как и у @ТекущийПользователь, администратора условие не касается.
 	Query string `yaml:"query,omitempty"`
+	// ValueQuery supplies a single nonempty UUID for equality on Field.
+	// Invalid or ambiguous results close the list for the applicable user.
+	ValueQuery string `yaml:"value_query,omitempty"`
 	// Removable — отбор по умолчанию: над списком переключатель с подписью
 	// Label, снятый переключатель отключает условие (как «Только активные» в
 	// рабочем списке задач 1С). Без Removable условие снять нельзя.
 	Removable bool              `yaml:"removable,omitempty"`
 	Label     map[string]string `yaml:"label,omitempty"`
+}
+
+// ValueQueryField validates the configuration and resolves the reference field.
+func (c FormListCondition) ValueQueryField(entity *Entity) (string, error) {
+	op := strings.ToLower(strings.TrimSpace(c.Op))
+	if strings.TrimSpace(c.ValueQuery) == "" || c.Query != "" || c.Value != "" || op != "" && op != "eq" {
+		return "", fmt.Errorf("value_query требует непустой запрос и оператор eq без query или value")
+	}
+	name := strings.TrimSpace(c.Field)
+	if entity != nil {
+		for _, field := range entity.Fields {
+			if strings.EqualFold(field.Name, name) && field.RefEntity != "" {
+				return field.Name, nil
+			}
+		}
+	}
+	return "", fmt.Errorf("value_query: поле %q должно быть ссылочным реквизитом", name)
 }
 
 // DisplayLabel — подпись переключателя снимаемого отбора на языке lang

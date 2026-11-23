@@ -655,6 +655,7 @@ func formModuleYAMLSchema() *yamlLintSchema {
 		"title_from",
 		"hint_inline",
 		"text_color", "importance",
+		"header_background", "header_border_color",
 	} {
 		element.keys[k] = nil
 	}
@@ -699,7 +700,7 @@ func formModuleYAMLSchema() *yamlLintSchema {
 	// загрузчиком внутри блока form:.
 	formHeader := with(obj("entity", "name", "kind", "original_id", "auto_save_settings", "auto_save_data_in_settings", "vertical_scroll", "ref_card_button", "ref_card_button_admin_only", "enter_submits_form"), map[string]*yamlLintSchema{
 		"title": freeMap(),
-		"filter": seq(with(obj("field", "op", "value", "roles", "query", "removable"), map[string]*yamlLintSchema{
+		"filter": seq(with(obj("field", "op", "value", "roles", "query", "value_query", "removable"), map[string]*yamlLintSchema{
 			"label": freeMap(),
 		})),
 	})
