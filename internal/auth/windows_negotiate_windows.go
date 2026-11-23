@@ -61,7 +61,7 @@ func acceptWindowsTicket(spn string, ticket []byte) (string, []byte, error) {
 	if !strings.EqualFold(windows.UTF16PtrToString(negotiation.info.Name), sspi.MICROSOFT_KERBEROS_NAME) {
 		return "", nil, errors.New("SSPI: требуется Kerberos")
 	}
-	var target *uint16 // SecPkgContext_ClientSpecifiedTarget
+	var target *uint16
 	if status := sspi.QueryContextAttributes(ctx.Handle, secPkgAttrClientTarget, (*byte)(unsafe.Pointer(&target))); status != sspi.SEC_E_OK { // #nosec G103 -- SecPkgContext_ClientSpecifiedTarget is a single UTF-16 pointer.
 		return "", nil, status
 	}
