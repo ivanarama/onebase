@@ -60,7 +60,10 @@ const tplAppShell = `{{define "page-app-shell"}}
 .ob-shell-main{flex:1;display:flex;flex-direction:column;min-width:0;overflow:hidden;padding:0}
 .ob-tabstrip{display:flex;gap:2px;background:#e2e8f0;padding:4px 6px 0;overflow-x:auto;flex-shrink:0;min-height:34px}
 .ob-tab{display:inline-flex;align-items:center;gap:6px;background:#f1f5f9;border:1px solid #cbd5e1;border-bottom:none;border-radius:6px 6px 0 0;padding:5px 8px 5px 12px;font-size:12px;color:#334155;cursor:pointer;white-space:nowrap;max-width:230px}
-.ob-tab.active{background:#fff;color:#1a4a80;font-weight:600}
+.ob-tab.active{background:#1a4a80;color:#fff;font-weight:700;border-color:#1a4a80}
+.ob-tab.active .ob-tab-dup,.ob-tab.active .ob-tab-close{color:#fff}
+.ob-tab.active .ob-tab-dup:hover{color:#fff;background:#315d8e}
+.ob-tab.active .ob-tab-close:hover{color:#fff;background:#b91c1c}
 .ob-tab.dirty .ob-tab-label::after{content:" •";color:#e8b400;font-weight:700}
 .ob-tab-label{overflow:hidden;text-overflow:ellipsis}
 .ob-tab-dup{color:#94a3b8;font-size:12px;line-height:1;border-radius:3px;padding:0 3px}
