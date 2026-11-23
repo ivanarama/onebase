@@ -937,3 +937,24 @@ actions:
 		}
 	}
 }
+
+// form.group_titles — известный ключ заголовка формы.
+func TestLintYAML_FormGroupTitlesKnown(t *testing.T) {
+	dir := t.TempDir()
+	mkFile(t, filepath.Join(dir, "forms", "звонок", "объекта.form.yaml"), `schema: onebase.form/v1
+form:
+  name: ФормаОбъекта
+  kind: object
+  entity: Звонок
+  group_titles: bold
+elements:
+  - kind: ПолеВвода
+    name: ПолеТема
+    data_path: Объект.Тема
+`)
+	for _, is := range CheckLintYAML(dir) {
+		if is.Code == "metadata.unvalidated-key" {
+			t.Fatalf("form.group_titles должен быть известен линту, получено: %+v", is)
+		}
+	}
+}
