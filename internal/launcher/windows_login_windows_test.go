@@ -1,6 +1,8 @@
 package launcher
 
 import (
+	"context"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os/user"
@@ -75,6 +77,7 @@ func TestEnterpriseWindowsLogin(t *testing.T) {
 		t.Helper()
 		req := httptest.NewRequest(http.MethodGet, target, nil)
 		req.RemoteAddr = "127.0.0.1:12345"
+		req = req.WithContext(context.WithValue(req.Context(), http.LocalAddrContextKey, ts.Listener.Addr()))
 		rec := httptest.NewRecorder()
 		baseServer.Handler().ServeHTTP(rec, req)
 		return rec
@@ -91,8 +94,17 @@ func TestEnterpriseWindowsLogin(t *testing.T) {
 		}
 		remote := httptest.NewRecorder()
 		baseServer.Handler().ServeHTTP(remote, httptest.NewRequest(http.MethodGet, window.url, nil))
-		if remote.Code != http.StatusNotFound || remote.Header().Get("Set-Cookie") != "" {
+		if remote.Header().Get("Location") != "/login" || remote.Header().Get("Set-Cookie") != "" {
 			t.Fatal("local code must be unusable on a remote connection")
+		}
+		forwarded := httptest.NewRequest(http.MethodGet, window.url, nil)
+		forwarded.RemoteAddr = "127.0.0.1:12345"
+		wrongPort := &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: base.Port + 1}
+		forwarded = forwarded.WithContext(context.WithValue(forwarded.Context(), http.LocalAddrContextKey, wrongPort))
+		wrong := httptest.NewRecorder()
+		baseServer.Handler().ServeHTTP(wrong, forwarded)
+		if wrong.Header().Get("Location") != "/login" || wrong.Header().Get("Set-Cookie") != "" {
+			t.Fatal("local code must be bound to its original TCP endpoint")
 		}
 		got := redeem(window.url)
 		if got.Code != http.StatusFound || got.Header().Get("Location") != "/ui" {

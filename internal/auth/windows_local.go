@@ -18,25 +18,21 @@ func (h *Handlers) MountLocalWindowsLogin(r chi.Router, secret, baseID, instance
 	if sid == "" || secret == "" || baseID == "" || instance == "" {
 		return
 	}
-	// Both endpoints belong to the local desktop, including when this base
-	// also listens on a LAN interface.
-	r = r.With(func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-			peer, _, err := net.SplitHostPort(req.RemoteAddr)
-			if err != nil || !net.ParseIP(peer).IsLoopback() {
-				http.NotFound(w, req)
-				return
-			}
-			next.ServeHTTP(w, req)
-		})
-	})
 	codes := NewOneTimeCodes(30 * time.Second)
-	sign := func(challenge string) string {
-		return processcontrol.WindowsLoginProof(secret, baseID, instance, sid, challenge)
+	// Authenticate the destination socket too. A listener forwarding requests
+	// from a different configured port must never receive the browser grant.
+	verify := func(r *http.Request, signature, challenge string) bool {
+		peer, _, err := net.SplitHostPort(r.RemoteAddr)
+		local, ok := r.Context().Value(http.LocalAddrContextKey).(*net.TCPAddr)
+		if err != nil || !net.ParseIP(peer).IsLoopback() || !ok || !local.IP.IsLoopback() {
+			return false
+		}
+		want := processcontrol.WindowsLoginProof(secret, baseID, instance, sid, local.Port, challenge)
+		return processcontrol.Verify(signature, want)
 	}
 	r.Post("/debug/process/windows-login", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
-		if !processcontrol.Verify(r.Header.Get(processcontrol.HeaderProof), sign("prepare")) {
+		if !verify(r, r.Header.Get(processcontrol.HeaderProof), "prepare") {
 			w.WriteHeader(http.StatusForbidden)
 			return
 		}
@@ -63,7 +59,7 @@ func (h *Handlers) MountLocalWindowsLogin(r chi.Router, secret, baseID, instance
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		code, signature, ok := strings.Cut(r.URL.Query().Get("code"), ".")
-		if !ok || !processcontrol.ValidNonce(code) || !processcontrol.Verify(signature, sign(code)) {
+		if !ok || !processcontrol.ValidNonce(code) || !verify(r, signature, code) {
 			http.Redirect(w, r, "/login", http.StatusFound)
 			return
 		}

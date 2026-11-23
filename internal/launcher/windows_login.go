@@ -31,7 +31,7 @@ func (h *handler) localWindowsURL(ctx context.Context, base *Base) string {
 		return ""
 	}
 	sign := func(challenge string) string {
-		return processcontrol.WindowsLoginProof(base.ControlToken, base.ID, identity.Instance, sid, challenge)
+		return processcontrol.WindowsLoginProof(base.ControlToken, base.ID, identity.Instance, sid, base.Port, challenge)
 	}
 	baseURL := fmt.Sprintf("http://127.0.0.1:%d", base.Port)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/debug/process/windows-login", nil)

@@ -106,7 +106,11 @@ func (h *Handlers) finishWindowsLogin(w http.ResponseWriter, r *http.Request, si
 		h.internalError(w, r, "чтение второго фактора при входе через Windows", err)
 		return
 	}
-	policy := h.Repo.AuthPolicy(r.Context())
+	policy, err := h.Repo.readAuthPolicy(r.Context())
+	if err != nil {
+		h.internalError(w, r, "чтение политики при входе через Windows", err)
+		return
+	}
 	if enabled || h.Repo.RequiresTwoFactor(r.Context(), policy, user) {
 		ch := Challenge{UserID: user.ID, Login: user.Login, ReturnURL: returnURL, windowsSID: sid, Enroll: !enabled}
 		if !h.issueLoginChallenge(w, r, &ch, policy.SelfEnroll2FA) {

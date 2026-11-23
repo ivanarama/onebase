@@ -99,23 +99,29 @@ func passwordLoginBreakGlass() bool {
 // таблица дают пустую политику: аутентификация обязана работать и на базе,
 // созданной до плана 84.
 func (r *Repo) AuthPolicy(ctx context.Context) Policy {
-	if r == nil || r.db == nil {
-		return Policy{}
-	}
-	raw, ok, err := r.db.GetSetting(ctx, authPolicyKey)
-	if err != nil || !ok || strings.TrimSpace(raw) == "" {
-		if err != nil {
-			authLog().Warn("не удалось прочитать политики аутентификации", "err", err)
-		}
-		return Policy{}
-	}
-	var p Policy
-	if err := json.Unmarshal([]byte(raw), &p); err != nil {
-		authLog().Error("битый JSON политик аутентификации — политики не применяются",
-			"ключ", authPolicyKey, "err", err)
-		return Policy{}
+	p, err := r.readAuthPolicy(ctx)
+	if err != nil {
+		authLog().Error("не удалось прочитать политики аутентификации", "err", err)
 	}
 	return p
+}
+
+func (r *Repo) readAuthPolicy(ctx context.Context) (Policy, error) {
+	if r == nil || r.db == nil {
+		return Policy{}, fmt.Errorf("auth: хранилище политик недоступно")
+	}
+	raw, ok, err := r.db.GetSetting(ctx, authPolicyKey)
+	if err != nil || !ok {
+		return Policy{}, err
+	}
+	var p *Policy
+	if err := json.Unmarshal([]byte(raw), &p); err != nil {
+		return Policy{}, fmt.Errorf("auth: чтение %s: %w", authPolicyKey, err)
+	}
+	if p == nil {
+		return Policy{}, fmt.Errorf("auth: %s должен быть объектом", authPolicyKey)
+	}
+	return *p, nil
 }
 
 // SaveAuthPolicy сохраняет политики.

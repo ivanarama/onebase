@@ -49,6 +49,13 @@ func TestNegotiateOnlyAcceptsVerifiedTicket(t *testing.T) {
 	if _, err := db.Exec(ctx, "UPDATE _users SET windows_sid=? WHERE id=?", boundSID, user.ID); err != nil {
 		t.Fatal(err)
 	}
+	role := &Role{Name: "Operator"}
+	if err := repo.SyncRoles(ctx, []*Role{role}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.AssignRole(ctx, user.ID, role.ID); err != nil {
+		t.Fatal(err)
+	}
 	h := &Handlers{Repo: repo, WindowsSPN: "HTTP/base.example.org", SecureCookies: true}
 	do := func(header, returnPath string) *httptest.ResponseRecorder {
 		t.Helper()
@@ -103,12 +110,33 @@ func TestNegotiateOnlyAcceptsVerifiedTicket(t *testing.T) {
 	if len(cookies) != 1 || !cookies[0].Secure || !cookies[0].HttpOnly {
 		t.Fatal("missing secure session cookie")
 	}
-	loggedIn, err := repo.LookupSessionKind(ctx, cookies[0].Value, SessionKindEnterprise)
-	if err != nil || loggedIn.ID != user.ID || loggedIn.IsAdmin {
-		t.Fatalf("incorrect enterprise identity: %+v/%v", loggedIn, err)
+	page := httptest.NewRequest(http.MethodGet, "/ui", nil)
+	page.AddCookie(cookies[0])
+	rec := httptest.NewRecorder()
+	repo.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		principal := UserFromContext(r.Context())
+		if principal == nil || principal.ID != user.ID || principal.IsAdmin || len(principal.Roles) != 1 || principal.Roles[0].ID != role.ID {
+			t.Fatal("Windows session did not inherit the linked user's roles")
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})).ServeHTTP(rec, page)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("session cookie rejected at protected page: HTTP %d", rec.Code)
 	}
 	if _, err := repo.LookupSessionKind(ctx, cookies[0].Value, SessionKindConfigurator); err == nil {
 		t.Fatal("received configurator session")
+	}
+	if err := db.SaveSetting(ctx, authPolicyKey, "null"); err != nil {
+		t.Fatal(err)
+	}
+	if rec := do("Negotiate dmVyaWZpZWQ=", "/ui"); rec.Code != 500 || len(rec.Result().Cookies()) != 0 {
+		t.Fatal("malformed policy allowed Windows login")
+	}
+	if _, err := db.Exec(ctx, "ALTER TABLE _settings RENAME COLUMN value TO unavailable"); err != nil {
+		t.Fatal(err)
+	}
+	if rec := do("Negotiate dmVyaWZpZWQ=", "/ui"); rec.Code != 500 || len(rec.Result().Cookies()) != 0 {
+		t.Fatal("unreadable policy allowed Windows login")
 	}
 	if err := repo.SetDisabled(ctx, user.ID, true); err != nil {
 		t.Fatal(err)

@@ -55,8 +55,9 @@ func (db *DB) ListSettings(ctx context.Context) ([]SettingEntry, error) {
 
 // GetSetting читает значение по ключу. ok=false — ключа (или таблицы) нет.
 func (db *DB) GetSetting(ctx context.Context, key string) (value string, ok bool, err error) {
-	if !tableExistsIn(ctx, db, "_settings") {
-		return "", false, nil
+	exists, err := tableExistsErr(ctx, db, "_settings")
+	if err != nil || !exists {
+		return "", false, err
 	}
 	var v string
 	if e := db.QueryRow(ctx,
