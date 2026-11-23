@@ -81,8 +81,9 @@ func TestStoreCrossInstanceLockSerializesWholeTransaction(t *testing.T) {
 	secondDone := make(chan error, 1)
 	go func() { secondDone <- second.SetOnClose(OnCloseStop) }()
 	early := false
+	var earlyErr error
 	select {
-	case <-secondDone:
+	case earlyErr = <-secondDone:
 		early = true
 	case <-time.After(100 * time.Millisecond):
 	}
@@ -91,7 +92,7 @@ func TestStoreCrossInstanceLockSerializesWholeTransaction(t *testing.T) {
 		t.Fatalf("first mutation: %v", err)
 	}
 	if early {
-		t.Fatal("второй Store вошёл в mutation до освобождения межпроцессного lock")
+		t.Fatalf("второй Store вошёл в mutation до освобождения межпроцессного lock (результат %v)", earlyErr)
 	}
 	if err := <-secondDone; err != nil {
 		t.Fatalf("second mutation: %v", err)
