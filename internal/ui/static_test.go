@@ -62,7 +62,7 @@ func TestStaticUIJS(t *testing.T) {
 		"data-ob-attachments",
 		"data-ob-select-on-click",
 		"window.onebaseDevice",
-		"new EventSource('/ui/events')",
+		"new EventSource('/ui/events' + (shell ? '?shell=' + encodeURIComponent(shell) : ''))",
 		"window.requestAnimationFrame ||",
 		"document.createEvent('CustomEvent')",
 		"msg.name === 'уведомление'",
@@ -173,7 +173,9 @@ func TestTabShellSingleSSEAndEventForwarding(t *testing.T) {
 	if !strings.Contains(src, "if (!window.__obEmbedded) {") {
 		t.Error("ui.js должен подключать SSE /ui/events только вне вкладочного фрейма (гейт window.__obEmbedded)")
 	}
-	if got := strings.Count(src, "new EventSource('/ui/events')"); got != 1 {
+	// Подписка несёт адрес оболочки (?shell=…): по нему сервер отдаёт команды
+	// формы самому себе только этой оболочке.
+	if got := strings.Count(src, "new EventSource('/ui/events'"); got != 1 {
 		t.Errorf("ui.js должен содержать ровно один конструктор SSE /ui/events, найдено %d", got)
 	}
 	// Один поток в оболочке не должен ломать публичный JS-мост произвольных
