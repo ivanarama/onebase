@@ -51,28 +51,28 @@ func acceptWindowsTicket(spn string, ticket []byte) (string, []byte, error) {
 		info  *sspi.SecPkgInfo
 		state uint32
 	}
-	if status := sspi.QueryContextAttributes(ctx.Handle, secPkgAttrNegotiationInfo, (*byte)(unsafe.Pointer(&negotiation))); status != sspi.SEC_E_OK {
+	if status := sspi.QueryContextAttributes(ctx.Handle, secPkgAttrNegotiationInfo, (*byte)(unsafe.Pointer(&negotiation))); status != sspi.SEC_E_OK { // #nosec G103 -- layout of the SSPI output buffer is SecPkgContext_NegotiationInfoW.
 		return "", nil, status
 	}
 	if negotiation.info == nil {
 		return "", nil, errors.New("SSPI: отсутствует пакет аутентификации")
 	}
-	defer sspi.FreeContextBuffer((*byte)(unsafe.Pointer(negotiation.info)))
+	defer func() { _ = sspi.FreeContextBuffer((*byte)(unsafe.Pointer(negotiation.info))) }() // #nosec G103 -- free the package information allocated by SSPI.
 	if !strings.EqualFold(windows.UTF16PtrToString(negotiation.info.Name), sspi.MICROSOFT_KERBEROS_NAME) {
 		return "", nil, errors.New("SSPI: требуется Kerberos")
 	}
 	var target *uint16 // SecPkgContext_ClientSpecifiedTarget
-	if status := sspi.QueryContextAttributes(ctx.Handle, secPkgAttrClientTarget, (*byte)(unsafe.Pointer(&target))); status != sspi.SEC_E_OK {
+	if status := sspi.QueryContextAttributes(ctx.Handle, secPkgAttrClientTarget, (*byte)(unsafe.Pointer(&target))); status != sspi.SEC_E_OK { // #nosec G103 -- SecPkgContext_ClientSpecifiedTarget is a single UTF-16 pointer.
 		return "", nil, status
 	}
-	defer sspi.FreeContextBuffer((*byte)(unsafe.Pointer(target)))
+	defer func() { _ = sspi.FreeContextBuffer((*byte)(unsafe.Pointer(target))) }() // #nosec G103 -- free the target name allocated by SSPI.
 	if !strings.EqualFold(windows.UTF16PtrToString(target), spn) {
 		return "", nil, errors.New("SSPI: SPN билета не совпадает с настройкой сервера")
 	}
 	// QuerySecurityContextToken returns an owned token handle (unlike the
 	// borrowed SECPKG_ATTR_ACCESS_TOKEN). No thread impersonation is necessary.
 	var token windows.Token
-	status, _, _ := querySecurityContextToken.Call(uintptr(unsafe.Pointer(ctx.Handle)), uintptr(unsafe.Pointer(&token)))
+	status, _, _ := querySecurityContextToken.Call(uintptr(unsafe.Pointer(ctx.Handle)), uintptr(unsafe.Pointer(&token))) // #nosec G103 -- QuerySecurityContextToken takes a CtxtHandle pointer and writes one HANDLE.
 	if status != 0 {
 		return "", nil, syscall.Errno(status)
 	}
