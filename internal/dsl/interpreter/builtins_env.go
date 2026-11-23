@@ -81,6 +81,16 @@ func installEnvironmentConstants(e *env) {
 	e.setLocal("Символы", chars)
 	e.setLocal("Chars", chars)
 
+	// Уровни ЗаписьЖурналаРегистрации, имена как в 1С.
+	eventLogLevels := &MapThis{M: map[string]any{
+		"Информация": "Информация", "Information": "Информация",
+		"Предупреждение": "Предупреждение", "Warning": "Предупреждение",
+		"Ошибка": "Ошибка", "Error": "Ошибка",
+		"Примечание": "Примечание", "Note": "Примечание",
+	}}
+	e.setLocal("УровеньЖурналаРегистрации", eventLogLevels)
+	e.setLocal("EventLogLevel", eventLogLevels)
+
 	// Короткие имена встречаются в перенесённых конфигурациях и остаются
 	// однозначными в поддерживаемом подмножестве API.
 	e.setLocal("КодировкаURL", "КодировкаURL")
