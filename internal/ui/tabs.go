@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"net/http"
+	"strings"
 
 	"github.com/ivantit66/onebase/internal/auth"
 )
@@ -49,6 +50,13 @@ func (s *Server) appShell(w http.ResponseWriter, r *http.Request) {
 		scope = "open-access:v1"
 	}
 	data["TabStorageScope"] = scope
+	displayTitles := map[string]string{}
+	for _, e := range s.reg.Entities() {
+		if f := pickManagedForm(e, "object"); f != nil && f.TitleProc != "" {
+			displayTitles[strings.ToLower("/ui/"+string(e.Kind)+"/"+e.Name+"/")] = e.DisplayName(s.resolveLang(r))
+		}
+	}
+	data["FormDisplayTitleEntities"] = displayTitles
 	w.Header().Set("Cache-Control", "no-store")
 	s.render(w, r, "page-app-shell", data)
 }
@@ -91,6 +99,7 @@ const tplAppShell = `{{define "page-app-shell"}}
   var body=document.getElementById('ob-tabbody');
   var empty=document.getElementById('ob-tabempty');
   var home=document.getElementById('ob-tabhome');
+  var DISPLAY_TITLE_ENTITIES={{.FormDisplayTitleEntities}} || {};
   var tabs=[]; var active=null; var tabSeq=0; var STORE='obTabs'; var STORE_ACTIVE='obTabsActive';
   var STORAGE_SCOPE={{.TabStorageScope}};
   var STORE_SCOPE='obTabsScope'; var storageReady=false;
@@ -206,7 +215,8 @@ const tplAppShell = `{{define "page-app-shell"}}
     t.btn.classList.toggle('dirty',false);
     return true;
   }
-  function closeTab(t,reason,mode,source){
+  function closeTab(t,reason,mode,source,resultToken){
+    if(resultToken && !resultHandoffCurrent(t,resultToken))return false;
     var i=tabs.indexOf(t); if(i<0)return false;
     if(t.closePromise)return t.closePromise;
     // Автогенерируемая страница без managed-конфига не имеет close lifecycle.
@@ -227,6 +237,7 @@ const tplAppShell = `{{define "page-app-shell"}}
         if(decision&&(decision.error==='timeout'||decision.error==='post-message')&&window.alert)window.alert(closeFailureMessage());
         return false;
       }
+      if(resultToken && !resultHandoffCurrent(t,resultToken))return false;
       if(!finalizeTabClose(t,decision)){
         if(window.alert)window.alert(closeFailureMessage());
         return false;
@@ -266,6 +277,10 @@ const tplAppShell = `{{define "page-app-shell"}}
     if(active===t)persistActive(t);
   }
   function openTab(url,title,opts){
+    // Never paint a link's raw record label while a display-title form loads.
+    try { var path=decodeURIComponent(new URL(url,location.origin).pathname).toLowerCase();
+      Object.keys(DISPLAY_TITLE_ENTITIES).some(function(prefix){if(path.indexOf(prefix)===0 && path.slice(prefix.length).indexOf('/')<0 && path.slice(prefix.length)){title=DISPLAY_TITLE_ENTITIES[prefix];return true;}return false;});
+    } catch(_) {}
     opts=opts||{};
     if(!opts.allowDup){ for(var i=0;i<tabs.length;i++){ if(tabs[i].url===url){ if(!opts.restoring)setActive(tabs[i]); return tabs[i]; } } }
     var btn=document.createElement('div'); btn.className='ob-tab'; btn.setAttribute('role','tab'); btn.title=title||'Форма'; // фаза 4: тултип полного заголовка
@@ -406,6 +421,109 @@ const tplAppShell = `{{define "page-app-shell"}}
       return !!documentToken && documentToken===child.obFrameCloseDocumentToken && sameURL(child.location.href,u);
     }catch(e){ return false; }
   }
+  // The shell owns result frames. They are never children of the closed card.
+  var resultFrames=[];
+  function resultHandoffCurrent(t,token){try{return !!t.frame.contentWindow.obResultHandoffCurrent(token);}catch(_){return false;}}
+  function resultByWindow(win){for(var i=0;i<resultFrames.length;i++){if(resultFrames[i].frame.contentWindow===win)return resultFrames[i];}return null;}
+  function releaseResult(token){
+    if(typeof fetch==='function') fetch('/ui/_form-result/'+encodeURIComponent(token)+'/release',{method:'POST',credentials:'same-origin'}).catch(function(){});
+  }
+  function closeResultFrame(t){
+    if(resultFrames.indexOf(t)<0)return Promise.resolve(false);
+    if(t.closePromise)return t.closePromise;
+    if(typeof window.obRequestFrameClose!=='function')return Promise.resolve(false);
+    t.closePromise=Promise.resolve(window.obRequestFrameClose(t.frame,'close','')).then(function(decision){
+      if(!decision||!decision.allowed||!finalizeTabClose(t,decision))return false;
+      t.panel.remove();resultFrames.splice(resultFrames.indexOf(t),1);releaseResult(t.token);return true;
+    }).catch(function(){return false;}).finally(function(){t.closePromise=null;});
+    return t.closePromise;
+  }
+  function resultURL(payload){
+    try{
+      var u=new URL(payload.url,location.origin);
+      if(u.origin!==location.origin||!/^\/ui\/processor\/[^/]+$/.test(u.pathname)||u.hash)return '';
+      if(!/^[0-9a-f-]{36}$/.test(payload.token)||u.searchParams.get('_ob_result_context')!==payload.token)return '';
+      var keys=[];u.searchParams.forEach(function(v,k){keys.push(k);});if(keys.length!==1)return '';
+      return u.pathname+u.search;
+    }catch(_){return '';}
+  }
+  // Result form is a centred modal dialog like a native message box: a dimmed
+  // backdrop, one title and one cross (the form's own header is hidden inside),
+  // height following the content. Close/Escape/veto still go through
+  // closeResultFrame and the form's close-intent.
+  // Height of the result document's content, whichever element scrolls: a
+  // clamped page (body 100vh, main scrolls) or a page whose document scrolls.
+  function fitResultFrame(t,round){
+    try{
+      var doc=t.frame.contentDocument, win=t.frame.contentWindow, main=doc&&doc.querySelector('main');
+      if(!doc||!doc.body||!main)return;
+      var html=doc.documentElement, y=win.scrollY||0, mr=main.getBoundingClientRect(), inner;
+      if(main.scrollHeight>main.clientHeight+1){
+        inner=main.scrollHeight; // main is clipped: its overflow is the exact content height
+      }else{
+        var bottom=0; // main fits or is stretched: measure its laid-out children
+        for(var c=main.firstElementChild;c;c=c.nextElementSibling){
+          if(c.offsetParent===null&&getComputedStyle(c).position!=='fixed')continue;
+          var r=c.getBoundingClientRect(), mb=parseFloat(getComputedStyle(c).marginBottom)||0;
+          bottom=Math.max(bottom,r.bottom+mb-mr.top+main.scrollTop);
+        }
+        inner=bottom+(parseFloat(getComputedStyle(main).paddingBottom)||0);
+      }
+      var mainTop=mr.top+y, mainBottom=mr.bottom+y;
+      var after=Math.max(0,Math.max(html.scrollHeight,html.clientHeight)-mainBottom);
+      // Only viewport-independent measures feed the height (main's children,
+      // its clipped overflow, what follows main), so the fit cannot run away.
+      var natural=Math.ceil(mainTop+inner+after);
+      if(natural>0&&Math.abs(natural-t.frame.offsetHeight)>1){
+        t.frame.style.height=natural+'px';
+        // Re-measure once laid out until the height is stable.
+        if((round||0)<6)requestAnimationFrame(function(){fitResultFrame(t,(round||0)+1);});
+      }
+    }catch(_){}
+  }
+  function showResultFrame(payload,url){
+    var overlay=document.createElement('div');overlay.className='ob-result-overlay';
+    overlay.style.cssText='position:fixed;inset:0;z-index:9000;background:rgba(15,23,42,.45);display:flex;align-items:center;justify-content:center;padding:16px;box-sizing:border-box';
+    var panel=document.createElement('section');panel.className='ob-result-form';panel.setAttribute('role','dialog');panel.setAttribute('aria-modal','true');
+    panel.style.cssText='width:600px;max-width:100%;max-height:calc(100vh - 32px);background:white;border-radius:10px;box-shadow:0 12px 40px rgba(0,0,0,.3);display:flex;flex-direction:column;overflow:hidden';
+    var head=document.createElement('div');head.style.cssText='display:flex;justify-content:space-between;align-items:center;gap:12px;padding:14px 12px 4px 20px;flex-shrink:0';
+    var label=document.createElement('span');label.textContent='';label.style.cssText='font-size:16px;font-weight:600;color:#1e293b;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';head.appendChild(label);
+    var cross=document.createElement('button');cross.type='button';cross.textContent='×';cross.setAttribute('aria-label','Close');cross.style.cssText='font-size:22px;line-height:1;color:#94a3b8;border:0;background:transparent;cursor:pointer;padding:2px 8px;border-radius:5px';head.appendChild(cross);
+    var frame=document.createElement('iframe');frame.src=url;frame.name='ob-result-'+payload.token;frame.style.cssText='display:block;width:100%;height:160px;min-height:0;flex:0 1 auto;border:0';
+    panel.setAttribute('aria-labelledby',(label.id='ob-result-title-'+payload.token));
+    var t={panel:overlay,frame:frame,label:label,btn:cross,token:payload.token};resultFrames.push(t);
+    cross.addEventListener('click',function(){closeResultFrame(t);});
+    overlay.addEventListener('keydown',function(ev){if(ev.key==='Escape'){ev.preventDefault();closeResultFrame(t);}});
+    frame.addEventListener('load',function(){
+      fitResultFrame(t);
+      try{ if(typeof ResizeObserver==='function'){var ro=new ResizeObserver(function(){fitResultFrame(t);});var d=frame.contentDocument,m=d.querySelector('main');ro.observe(d.body);if(m){for(var c=m.firstElementChild;c;c=c.nextElementSibling)ro.observe(c);}} }catch(_){}
+    });
+    panel.appendChild(head);panel.appendChild(frame);overlay.appendChild(panel);document.body.appendChild(overlay);cross.focus();
+  }
+  function resultMessage(ev,d){
+    var mini=resultByWindow(ev.source);
+    if(mini){
+      var sourceURL=d.sourceURL||d.url||'';
+      if(!frameShows(mini,String(sourceURL),d.documentToken))return d.source!=='obOpenTab';
+      if(d.source==='obSetTitle'){mini.label.textContent=String(d.title||'');return true;}
+      if(d.source==='obCloseTab'){closeResultFrame(mini);return true;}
+      if(d.source==='obResultAction'){
+        if(d.navigation){var target=String(d.navigation.url||'');if(!openable(target))return true;openTab(target,'Форма',{});}
+        if(d.closeSelf)closeResultFrame(mini);
+        return true;
+      }
+      return false;
+    }
+    if(d.source!=='obFormResult')return false;
+    var origin=tabByWindow(ev.source);var payload=d.result||{};var url=resultURL(payload);
+    if(!origin||!url||!frameShows(origin,String(d.sourceURL||''),d.documentToken)||origin.resultPending)return true;
+    origin.resultPending=payload.token;
+    Promise.resolve(closeTab(origin,'close','', '',payload.token)).then(function(closed){
+      origin.resultPending=null;
+      if(closed)showResultFrame(payload,url);else releaseResult(payload.token);
+    });
+    return true;
+  }
   function tabByWindow(win){ for(var i=0;i<tabs.length;i++){ if(tabs[i].frame.contentWindow===win)return tabs[i]; } return null; }
   window.addEventListener('message',function(ev){
     // Принимаем сообщения только от своего origin: иначе любой сторонний фрейм
@@ -414,10 +532,11 @@ const tplAppShell = `{{define "page-app-shell"}}
     // admin/login/...), чтобы postMessage не открывал внешние схемы.
     if(ev.origin!==location.origin)return;
     var d=ev.data; if(!d||typeof d!=='object')return;
+    if(resultMessage(ev,d))return;
     if(d.source==='obOpenTab' && d.url){ var ou=String(d.url); if(!openable(ou))return; openTab(ou, d.title?String(d.title):'Форма', {allowDup:!!d.allowDup}); }
     else if(d.source==='obCloseTab'){ if(d.url){ closeTabByURL(String(d.url),d.reason||'programmatic',d.closeSource); } else { var ct=tabByWindow(ev.source); if(ct)closeTab(ct,d.reason||'cross',d.mode||''); } }
     else if(d.source==='obFrameURLChanged' && d.url){ var ut=tabByWindow(ev.source); if(ut && frameShows(ut,String(d.url),d.documentToken)){ syncFrameURL(ut,String(d.url)); var pc=takePendingClose(ut); if(pc)closeCommandTab(ut,pc.reason,pc.source); } }
-    else if(d.source==='obSetTitle' && d.title){ var tt=tabByWindow(ev.source); if(tt){ tt.title=String(d.title); tt.label.textContent=tt.title; tt.btn.title=tt.title; persist(); } }
+    else if(d.source==='obSetTitle' && d.title){ var tt=tabByWindow(ev.source); if(tt && frameShows(tt,String(d.url||''),d.documentToken)){ tt.title=String(d.title); tt.label.textContent=tt.title; tt.btn.title=tt.title; persist(); } }
     else if(d.source==='obDirty'){ var dt=tabByWindow(ev.source); if(dt){ dt.dirty=!!d.dirty; dt.btn.classList.toggle('dirty',dt.dirty); } } // фаза 3
   });
 
