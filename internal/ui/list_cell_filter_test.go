@@ -1,0 +1,163 @@
+package ui
+
+import (
+	"bytes"
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
+	"github.com/ivantit66/onebase/internal/auth"
+	"github.com/ivantit66/onebase/internal/dbtest"
+	"github.com/ivantit66/onebase/internal/metadata"
+	"github.com/ivantit66/onebase/internal/storage"
+	"github.com/xuri/excelize/v2"
+)
+
+func TestListCellExactFilterHTTPMatrix(t *testing.T) {
+	for _, zone := range []*time.Location{time.FixedZone("east", 3*60*60), time.FixedZone("west", -5*60*60)} {
+		t.Run(zone.String(), func(t *testing.T) {
+			saved := time.Local
+			time.Local = zone
+			t.Cleanup(func() { time.Local = saved })
+			testListCellExactFilterHTTP(t)
+		})
+	}
+}
+
+func testListCellExactFilterHTTP(t *testing.T) {
+	t.Helper()
+	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
+		target := &metadata.Entity{Name: "Targets", Kind: metadata.KindCatalog, Fields: []metadata.Field{{Name: "Наименование", Type: metadata.FieldTypeString}}}
+		ent := &metadata.Entity{Name: "Items", Kind: metadata.KindCatalog, Fields: []metadata.Field{
+			{Name: "Наименование", Type: metadata.FieldTypeString}, {Name: "Amount", Type: metadata.FieldTypeNumber},
+			{Name: "Flag", Type: metadata.FieldTypeBool}, {Name: "Day", Type: metadata.FieldTypeDate},
+			{Name: "Target", Type: "reference:Targets", RefEntity: "Targets"},
+		}}
+		s := newSubmitTestServerOn(t, db, []*metadata.Entity{target, ent})
+		ctx := context.Background()
+		id1, id2 := uuid.New(), uuid.New()
+		for _, id := range []uuid.UUID{id1, id2} {
+			if err := db.Upsert(ctx, target.Name, id, map[string]any{"Наименование": "Same label"}, target); err != nil {
+				t.Fatal(err)
+			}
+		}
+		for _, row := range []map[string]any{
+			{"Наименование": "Exact%_", "Amount": 5, "Flag": false, "Day": time.Date(2026, 11, 12, 0, 0, 0, 0, time.Local), "Target": id1.String()},
+			{"Наименование": "prefixExact%_suffix", "Amount": 50, "Flag": true, "Day": time.Date(2026, 11, 13, 0, 0, 0, 0, time.Local), "Target": id2.String()},
+			{"Наименование": "Other", "Amount": 5, "Flag": false, "Day": time.Date(2026, 11, 12, 23, 59, 59, 0, time.Local), "Target": id2.String()},
+		} {
+			if err := db.Upsert(ctx, ent.Name, uuid.New(), row, ent); err != nil {
+				t.Fatal(err)
+			}
+		}
+		wantDay := 2
+		if db.Dialect().Name() == "sqlite" {
+			legacy := map[string]any{"Наименование": "Legacy", "Amount": 50, "Flag": true, "Day": "2026-11-12 06:00:00", "Target": id2.String()}
+			if err := db.Upsert(ctx, ent.Name, uuid.New(), legacy, ent); err != nil {
+				t.Fatal(err)
+			}
+			wantDay++
+		}
+		for _, tc := range []struct {
+			q    url.Values
+			want int
+		}{
+			{url.Values{"f.Наименование.eq": {"Exact%_"}}, 1},
+			{url.Values{"f.Amount.eq": {"5"}}, 2},
+			{url.Values{"f.Amount.eq": {"05.00"}}, 2},
+			{url.Values{"f.Amount.eq": {"not-number"}}, 0},
+			{url.Values{"f.Flag.eq": {"false"}}, 2},
+			{url.Values{"f.Target.eq": {id1.String()}}, 1},
+			{url.Values{"f.Day.eq": {"2026-11-12"}}, wantDay},
+			{url.Values{"f.Day.eq": {"not-a-date"}}, 0},
+		} {
+			r := reqWithChi("GET", "/ui/catalog/Items?"+tc.q.Encode(), nil, map[string]string{"entity": "Items"})
+			rec := httptest.NewRecorder()
+			s.list(rec, r)
+			if rec.Code != 200 {
+				t.Fatalf("%v: %d %s", tc.q, rec.Code, rec.Body.String())
+			}
+			if got := strings.Count(rec.Body.String(), "data-ob-entity-id="); got != tc.want {
+				t.Fatalf("%v: %d rows, want %d", tc.q, got, tc.want)
+			}
+			if tc.want > 0 && !strings.Contains(rec.Body.String(), "data-ob-cell=") {
+				t.Fatal("no filterable cells")
+			}
+			if tc.q.Get("f.Day.eq") == "2026-11-12" {
+				for _, expected := range []string{`data-ob-cell="Day" data-ob-cell-value="2026-11-12"`, `name="f.Day.eq" value="2026-11-12"`} {
+					if !strings.Contains(rec.Body.String(), expected) {
+						t.Fatalf("filter state missing: %s", expected)
+					}
+				}
+			}
+			export := httptest.NewRecorder()
+			s.listExcel(export, reqWithChi("GET", "/ui/catalog/Items/excel?"+tc.q.Encode(), nil, map[string]string{"entity": "Items"}))
+			if export.Code != 200 {
+				t.Fatalf("excel: %d %s", export.Code, export.Body.String())
+			}
+			book, err := excelize.OpenReader(bytes.NewReader(export.Body.Bytes()))
+			if err != nil {
+				t.Fatal(err)
+			}
+			rows, err := book.GetRows(book.GetSheetName(0))
+			if closeErr := book.Close(); closeErr != nil {
+				t.Fatal(closeErr)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(rows) != tc.want+1 {
+				t.Fatalf("%v: excel rows=%v", tc.q, rows)
+			}
+		}
+	})
+}
+
+func TestExactListFiltersRespectFieldPolicy(t *testing.T) {
+	entity := &metadata.Entity{Name: "PolicyItems", Kind: metadata.KindCatalog, Fields: []metadata.Field{
+		{Name: "Наименование", Type: metadata.FieldTypeString},
+		{Name: "ProtectedField", Type: metadata.FieldTypeString},
+	}}
+	server, ctx := newSubmitTestServer(t, []*metadata.Entity{entity})
+	if err := server.store.Upsert(ctx, entity.Name, uuid.New(), map[string]any{
+		"Наименование": "Sample", "ProtectedField": "Fixture",
+	}, entity); err != nil {
+		t.Fatal(err)
+	}
+	restricted := &auth.User{ID: "restricted", Login: "restricted", Roles: []*auth.Role{{
+		Name: "Restricted",
+		Permissions: auth.Permission{
+			Catalogs: map[string][]string{entity.Name: {"read"}},
+			FieldAccess: auth.FieldAccess{
+				Catalogs: map[string]auth.FieldPolicies{entity.Name: {"ProtectedField": {Read: "hide"}}},
+			},
+		},
+	}}}
+	router := chi.NewRouter()
+	server.Mount(router)
+	for _, path := range []string{"/ui/catalog/PolicyItems", "/ui/catalog/PolicyItems/excel"} {
+		for _, scenario := range []struct {
+			field string
+			value string
+			want  int
+		}{
+			{field: "Наименование", value: "Sample", want: http.StatusOK},
+			{field: "ProtectedField", value: "Fixture", want: http.StatusForbidden},
+		} {
+			values := url.Values{"f." + scenario.field + ".eq": {scenario.value}}
+			request := httptest.NewRequest(http.MethodGet, path+"?"+values.Encode(), nil)
+			request = request.WithContext(auth.ContextWithUser(request.Context(), restricted))
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, request)
+			if recorder.Code != scenario.want {
+				t.Fatalf("%s field %s: got HTTP %d, want %d", path, scenario.field, recorder.Code, scenario.want)
+			}
+		}
+	}
+}

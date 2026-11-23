@@ -56,9 +56,10 @@ type ListParams struct {
 
 // FilterValue holds a filter for one field.
 type FilterValue struct {
-	Value string // used for string and reference equality
+	Value string // used for equality, including the local calendar day for dates
 	From  string // used for date range start (inclusive)
 	To    string // used for date range end (inclusive)
+	Exact bool   // exact scalar equality, including an empty string
 }
 
 // Upsert inserts or updates the object fields.
@@ -760,6 +761,23 @@ func (db *DB) listWhere(entityName string, entity *metadata.Entity, params ListP
 		column := metadata.ColumnName(field)
 		switch {
 		case field.Type == metadata.FieldTypeDate:
+			if filter.Exact {
+				day, err := time.ParseInLocation(time.DateOnly, filter.Value, time.Local)
+				if err != nil {
+					whereParts = append(whereParts, "1 = 0")
+					continue
+				}
+				if d.Name() == "sqlite" {
+					whereParts = append(whereParts, fmt.Sprintf("substr(ob_local_datetime(%s), 1, 10) = %s", column, d.Placeholder(argIdx)))
+					args = append(args, filter.Value)
+					argIdx++
+				} else {
+					whereParts = append(whereParts, fmt.Sprintf("(%s >= %s AND %s < %s)", column, d.Placeholder(argIdx), column, d.Placeholder(argIdx+1)))
+					args = append(args, day, day.AddDate(0, 0, 1))
+					argIdx += 2
+				}
+				continue
+			}
 			if filter.From != "" {
 				whereParts = append(whereParts, fmt.Sprintf("%s >= %s", column, d.Placeholder(argIdx)))
 				args = append(args, filter.From)
@@ -794,6 +812,10 @@ func (db *DB) listWhere(entityName string, entity *metadata.Entity, params ListP
 				}
 			}
 		case field.RefEntity != "":
+			if filter.Exact && filter.Value == "" {
+				whereParts = append(whereParts, column+" IS NULL")
+				continue
+			}
 			if filter.Value != "" {
 				whereParts = append(whereParts, fmt.Sprintf("%s = %s", column, d.Placeholder(argIdx)))
 				if id, err := uuid.Parse(filter.Value); err == nil {
@@ -804,6 +826,26 @@ func (db *DB) listWhere(entityName string, entity *metadata.Entity, params ListP
 				argIdx++
 			}
 		default:
+			if filter.Exact {
+				value := filter.Value
+				if field.Type == metadata.FieldTypeNumber {
+					if len(value) > 128 {
+						whereParts = append(whereParts, "1 = 0")
+						continue
+					}
+					n, err := decimal.NewFromString(value)
+					if err != nil || n.Exponent() < -128 || n.Exponent() > 128 {
+						whereParts = append(whereParts, "1 = 0")
+						continue
+					}
+					column = "CAST(" + column + " AS NUMERIC)"
+					value = n.String()
+				}
+				whereParts = append(whereParts, column+" = "+d.Placeholder(argIdx))
+				args = append(args, value)
+				argIdx++
+				continue
+			}
 			if filter.Value != "" {
 				whereParts = append(whereParts, d.LowerLike(column)+" LIKE "+d.LowerLike(d.Placeholder(argIdx)))
 				args = append(args, "%"+filter.Value+"%")
