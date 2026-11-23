@@ -53,7 +53,12 @@ func TestConfiguratorButtonBackground_HTTPRoundTrip(t *testing.T) {
 	}
 	done := make(chan error, 1)
 	go func() { done <- server.ListenAndServe() }()
-	t.Cleanup(func() { server.Close(); <-done })
+	t.Cleanup(func() {
+		server.Close()
+		if err := <-done; err != nil && err != http.ErrServerClosed {
+			t.Error(err)
+		}
+	})
 	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	call := func(t *testing.T, method, path string, form url.Values) (int, string) {
 		t.Helper()
