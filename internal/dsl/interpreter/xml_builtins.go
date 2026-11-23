@@ -739,6 +739,9 @@ func (w *xmlWriter) writeValue(name string, v any, depth int) error {
 			return fmt.Errorf("соответствие повреждено: число ключей и значений различается")
 		}
 		for i, k := range x.keys {
+			if isMapTombstone(k) {
+				continue
+			}
 			key, ok := k.(string)
 			if !ok {
 				return fmt.Errorf("имя элемента из ключа Соответствия должно быть строкой, получено %T", k)
