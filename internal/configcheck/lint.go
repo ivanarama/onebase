@@ -2250,7 +2250,7 @@ func lintFieldNeedsIndex(f metadata.Field) bool {
 
 func hasLeadingIndex(ent *metadata.Entity, fieldName string) bool {
 	for _, idx := range ent.Indexes {
-		if len(idx.Fields) > 0 && strings.EqualFold(idx.Fields[0], fieldName) {
+		if idx.Normalizer == "" && len(idx.Fields) > 0 && strings.EqualFold(idx.Fields[0], fieldName) {
 			return true
 		}
 	}

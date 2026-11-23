@@ -273,8 +273,9 @@ type ActivityConfig struct {
 // Fields are entity field names as written in YAML. Storage maps them to
 // physical column names, including `_id` suffixes for references.
 type IndexSpec struct {
-	Fields []string
-	Unique bool
+	Fields     []string
+	Unique     bool
+	Normalizer string
 }
 
 type Entity struct {

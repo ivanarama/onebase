@@ -6639,6 +6639,12 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 			if prevDot && !nextIsDot && tr.shadowedSourceColumn(tr.pos-1, lower) {
 				return Result{}, i18nerr.Errorf("поле %s локального источника %s не разрешено однозначно; внешнее поле затенено", t.val, tr.tokens[tr.pos-3].val)
 			}
+			if !prevDot && !prevAlias && tr.peek(0).kind == tLParen && (lower == "нормализоватьтелефон" || lower == "phone_last10") {
+				if err := tr.emitPhoneLast10(); err != nil {
+					return Result{}, err
+				}
+				continue
+			}
 			if agg, ok := sqlAgg(t.val); ok && tr.peek(0).kind == tLParen {
 				tr.emit(agg)
 			} else if kw, ok := sqlKW(t.val); ok {
