@@ -225,7 +225,12 @@ func TestPasswordMinimumHintHTTP(t *testing.T) {
 			}
 			done := make(chan error, 1)
 			go func() { done <- srv.ListenAndServe() }()
-			t.Cleanup(func() { srv.Close(); <-done })
+			t.Cleanup(func() {
+				srv.Close()
+				if err := <-done; err != nil && err != http.ErrServerClosed {
+					t.Error(err)
+				}
+			})
 			client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 			post := func(path, lang, body string) (int, string) {
 				t.Helper()
