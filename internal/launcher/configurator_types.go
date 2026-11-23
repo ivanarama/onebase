@@ -56,6 +56,9 @@ type saveField struct {
 	// открывается всем ролям, которые про него не высказались. Полноту
 	// вложенных ключей сторожит TestSaveField_CoversAllRawKeys.
 	PII bool `yaml:"pii,omitempty"`
+	// PIIOpenWhen — условие раскрытия ПДн в форме записи (Field.PIIOpenWhen).
+	// Редактор его тоже не показывает: переносится из прежнего файла, как pii.
+	PIIOpenWhen string `yaml:"pii_open_when,omitempty"`
 }
 
 type saveTP struct {

@@ -40,6 +40,13 @@ func (s *Server) maskRecord(ctx context.Context, entity *metadata.Entity, row ma
 	access.MaskRecord(s.fieldDecisions(ctx, entity), row)
 }
 
+// maskRecordWithDecisions — maskRecord с уже вычисленными решениями. Нужен
+// форме объекта: её решения зависят от сохранённой записи (pii_open_when,
+// recordFieldDecisions), а ответ события использует те же решения и для эха.
+func (s *Server) maskRecordWithDecisions(decisions map[string]access.FieldDecision, row map[string]any) {
+	access.MaskRecord(decisions, row)
+}
+
 // maskRecords masks a list of records in place.
 func (s *Server) maskRecords(ctx context.Context, entity *metadata.Entity, rows []map[string]any) {
 	access.MaskRecords(s.fieldDecisions(ctx, entity), rows)
@@ -451,7 +458,7 @@ func (s *Server) sourceMeta(kind, name string) *metadata.Entity {
 // обязан учесть, что в переданной карте после этого лежит РЕАЛЬНОЕ значение: для
 // DSL-объекта это тот же набор, который читает модуль, и без снятия признака
 // «присвоено» защита записи сама стала бы каналом раскрытия.
-func (s *Server) protectMaskedFieldsOnWrite(ctx context.Context, entity *metadata.Entity, id uuid.UUID, fields map[string]any) ([]string, error) {
+func (s *Server) protectMaskedFieldsOnWrite(ctx context.Context, entity *metadata.Entity, id uuid.UUID, fields map[string]any, objectForm bool) ([]string, error) {
 	dec := s.fieldDecisions(ctx, entity)
 	if len(dec) == 0 || fields == nil {
 		return nil, nil
@@ -459,6 +466,10 @@ func (s *Server) protectMaskedFieldsOnWrite(ctx context.Context, entity *metadat
 	row, err := s.store.GetByID(ctx, entity.Name, id, entity)
 	if err != nil {
 		return nil, err
+	}
+	// Условие раскрытия действует в форме объекта и вычисляется по сохранённой записи.
+	if objectForm {
+		dec = s.openPIIByRecord(entity, dec, row)
 	}
 	var restored []string
 	for field, decision := range dec {

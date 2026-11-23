@@ -150,7 +150,7 @@ func (s *Server) saveManagedObject(r *http.Request, entity *metadata.Entity, for
 		}
 	}
 	if !isNew {
-		if _, err := s.protectMaskedFieldsOnWrite(r.Context(), entity, obj.ID, obj.Fields); err != nil {
+		if _, err := s.protectMaskedFieldsOnWrite(r.Context(), entity, obj.ID, obj.Fields, true); err != nil {
 			return nil, 0, err
 		}
 		dec, err := s.rowDecision(r.Context(), entity, "write")
@@ -961,7 +961,7 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 			// Discard still runs trusted BeforeClose code, which may call
 			// Object.Write. Restore fields hidden/masked from this user before the
 			// handler so forged browser values cannot ride that authorized write.
-			if _, protectErr := s.protectMaskedFieldsOnWrite(dslCtx, entity, obj.ID, obj.Fields); protectErr != nil {
+			if _, protectErr := s.protectMaskedFieldsOnWrite(dslCtx, entity, obj.ID, obj.Fields, true); protectErr != nil {
 				w.WriteHeader(http.StatusInternalServerError)
 				respondJSON(enc, formEventResponse{Error: s.errText(r, protectErr)})
 				return
@@ -2085,8 +2085,15 @@ func (s *Server) serializeManagedFormEventState(ctx context.Context, form *metad
 	//
 	// serializeFieldsForEntity строит НОВУЮ карту, поэтому obj.Fields остаётся
 	// нетронутым и обработчик продолжает видеть настоящие значения.
-	echo := submittedFieldsToEcho(ctx, s.fieldDecisions(ctx, entity), obj.Fields, fields)
-	s.maskRecord(ctx, entity, fields)
+	decisions := s.fieldDecisions(ctx, entity)
+	// pii_open_when: условие — по сохранённой записи, не по присланной форме.
+	if len(decisions) > 0 && entityHasPIIOpenWhen(entity) && obj.ID != uuid.Nil {
+		if stored, err := s.store.GetByID(ctx, entity.Name, obj.ID, entity); err == nil {
+			decisions = s.openPIIByRecord(entity, decisions, stored)
+		}
+	}
+	echo := submittedFieldsToEcho(ctx, decisions, obj.Fields, fields)
+	s.maskRecordWithDecisions(decisions, fields)
 	for key, value := range echo {
 		fields[key] = value
 	}

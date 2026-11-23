@@ -29,6 +29,9 @@ import (
 
 var maskHelperGateFuncs = map[string]bool{
 	"maskRecord": true, "maskRecords": true,
+	// maskRecordWithDecisions — maskRecord с решениями, вычисленными заранее
+	// (форма объекта с pii_open_when по сохранённой записи).
+	"maskRecordWithDecisions": true,
 	// maskedRecordLabel зовёт maskRecord и отдаёт наружу только представление
 	// (field_access.go:82) — законная точка наложения маски.
 	"maskedRecordLabel": true,

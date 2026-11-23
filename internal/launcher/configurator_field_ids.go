@@ -263,6 +263,9 @@ func carryFieldKeys(f, old saveField) saveField {
 	if !f.PII {
 		f.PII = old.PII
 	}
+	if f.PIIOpenWhen == "" {
+		f.PIIOpenWhen = old.PIIOpenWhen
+	}
 	return f
 }
 
