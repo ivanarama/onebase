@@ -205,6 +205,19 @@ type QueueConfig struct {
 }
 
 // AppConfig holds the optional config/app.yaml metadata.
+// UIConfig — оформление интерфейса базы.
+type UIConfig struct {
+	// ListDensity: "" — прежний вид; "compact" — плотные списки, журналы,
+	// регистры и виджеты-списки: шрифт 12px, строка ≈ 22px, видимые границы
+	// строк и столбцов (как списки 1С).
+	ListDensity string `yaml:"list_density,omitempty"`
+}
+
+// CompactLists — включены ли плотные списки.
+func (c *AppConfig) CompactLists() bool {
+	return c != nil && c.UI != nil && c.UI.ListDensity == "compact"
+}
+
 type AppConfig struct {
 	Name    string `yaml:"name"`
 	Version string `yaml:"version"`
@@ -221,9 +234,11 @@ type AppConfig struct {
 	// конфигурацией по той же причине, что и Author: поставка клиенту несёт
 	// СВОЮ поддержку, а не трекер разработчика платформы, до которого
 	// пользователь не дойдёт и куда ему не надо.
-	Support     string             `yaml:"support,omitempty"`
-	Lang        string             `yaml:"lang,omitempty"`
-	Logo        string             `yaml:"logo,omitempty"`
+	Support string `yaml:"support,omitempty"`
+	Lang    string `yaml:"lang,omitempty"`
+	Logo    string `yaml:"logo,omitempty"`
+	// UI — оформление интерфейса всей базы (list_density и др.).
+	UI          *UIConfig          `yaml:"ui,omitempty"`
 	Email       *EmailConfig       `yaml:"email,omitempty"`
 	Attachments *AttachmentsConfig `yaml:"attachments,omitempty"`
 	// DeprecatedRussianPost preserves the permissive v0.9.3 behavior for
