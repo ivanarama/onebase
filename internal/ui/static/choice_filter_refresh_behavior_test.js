@@ -218,6 +218,17 @@ test('server selected_allowed keeps a value outside the page and clears only an 
   assert.equal(env.select.changeCount, 1);
 });
 
+test('locked select keeps its value and fires no change when the filter rejects it', async () => {
+  const env = runtime(async () => response({items: [], total: 0, selected_allowed: false}), 'legacy-location');
+  env.select.disabled = true;
+
+  env.sourceControl.value = 'warehouse-c';
+  await env.api.obRefreshChoiceSelect(env.select, false);
+  assert.equal(env.select.value, 'legacy-location', 'запертое поле не очищается отбором');
+  assert.equal(env.select.options.some((option) => option.value === 'legacy-location'), true);
+  assert.equal(env.select.changeCount, 0, 'запертое поле не шлёт change (ПриИзменении)');
+});
+
 test('network failure is visible and preserves the previously filtered options and value', async () => {
   const env = runtime(async () => { throw new Error('offline'); }, 'legacy-location');
   const before = env.select.options.map((option) => [option.value, option.textContent]);
