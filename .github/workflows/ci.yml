@@ -206,9 +206,11 @@ jobs:
         if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
         run: python3 .github/scripts/ci_metadata_test.py
 
-      - name: Release runner retry contracts
+      - name: Release automation contracts
         if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
-        run: python3 .github/scripts/release_runner_retry_test.py
+        run: |
+          python3 .github/scripts/release_runner_retry_test.py
+          python3 .github/scripts/build_notes_test.py
 
       # Raw commit messages can close issues even when the phrase is only an
       # example. This gate also runs for docs-only PRs and PR body edits.
