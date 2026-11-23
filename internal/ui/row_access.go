@@ -62,7 +62,7 @@ func (s *Server) applyListFormFilter(r *http.Request, entity *metadata.Entity, p
 	}
 	user := auth.UserFromContext(r.Context())
 	off := listFormFilterOff(r)
-	var extra []storage.Predicate
+	var fields, queries []storage.Predicate
 	for i, cond := range form.ListFilter {
 		// Снятый пользователем отбор по умолчанию не применяется; снять можно
 		// только removable-условие — адресом остальные не отключить.
@@ -70,12 +70,14 @@ func (s *Server) applyListFormFilter(r *http.Request, entity *metadata.Entity, p
 			continue
 		}
 		var (
-			pred storage.Predicate
-			ok   bool
+			pred    storage.Predicate
+			ok      bool
+			isQuery bool
 		)
 		if cond.ValueQuery != "" {
 			pred, ok = s.listFilterValueQueryPredicate(r.Context(), entity, cond, user)
 		} else if strings.TrimSpace(cond.Query) != "" {
+			isQuery = true
 			pred, ok = s.listFilterQueryPredicate(r.Context(), entity, cond, user)
 		} else {
 			pred, ok = s.listFilterPredicate(entity, cond, user)
@@ -83,23 +85,28 @@ func (s *Server) applyListFormFilter(r *http.Request, entity *metadata.Entity, p
 		if !ok {
 			continue
 		}
-		extra = append(extra, pred)
+		if isQuery {
+			queries = append(queries, pred)
+		} else {
+			fields = append(fields, pred)
+		}
 	}
-	if len(extra) == 0 {
+	if len(fields) == 0 && len(queries) == 0 {
 		return params
 	}
-	cond := storage.Predicate{All: extra}
-	// Папки иерархического справочника отбор не скрывает: по ним идёт
-	// навигация, и без папки без автора до своей записи внутри неё из списка
-	// и дерева было бы не дойти. Строковый доступ (row_access) на папки
-	// по-прежнему действует — он добавляется ниже через «И».
-	if entity.Hierarchical {
-		cond = storage.Predicate{Any: []storage.Predicate{
-			{Field: "is_folder", Op: "eq", Value: true},
-			cond,
-		}}
+	parts := queries
+	if len(fields) != 0 {
+		cond := storage.Predicate{All: fields}
+		// Отбор по полю сохраняет папки для навигации. Условие query
+		// ограничивает и папки, и записи; строковый доступ добавляется через И.
+		if entity.Hierarchical {
+			cond = storage.Predicate{Any: []storage.Predicate{
+				{Field: "is_folder", Op: "eq", Value: true},
+				cond,
+			}}
+		}
+		parts = append(parts, cond)
 	}
-	parts := []storage.Predicate{cond}
 	if params.RowFilter != nil {
 		parts = append(parts, *params.RowFilter)
 	}
