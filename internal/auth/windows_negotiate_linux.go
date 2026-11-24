@@ -23,13 +23,13 @@ var kerberosAcceptSlots = make(chan struct{}, 4)
 func acceptWindowsTicket(ctx context.Context, spn string, ticket []byte) (string, []byte, error) {
 	realm, keytab := os.Getenv("ONEBASE_KRB5_REALM"), os.Getenv("ONEBASE_KRB5_KEYTAB")
 	if realm == "" || !filepath.IsAbs(keytab) || len(ticket) == 0 || len(ticket) > maxWindowsTicket {
-		return "", nil, errors.New("Kerberos: отсутствует конфигурация или неверный размер билета")
+		return "", nil, errors.New("вход через Kerberos: отсутствует конфигурация или неверный размер билета")
 	}
 	select {
 	case kerberosAcceptSlots <- struct{}{}:
 		defer func() { <-kerberosAcceptSlots }()
 	default:
-		return "", nil, errors.New("Kerberos: сервер обрабатывает другие запросы входа")
+		return "", nil, errors.New("вход через Kerberos: сервер обрабатывает другие запросы входа")
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
@@ -52,16 +52,16 @@ func acceptWindowsTicket(ctx context.Context, spn string, ticket []byte) (string
 		if errors.As(err, &exited) {
 			switch exited.ExitCode() {
 			case 2:
-				return "", nil, errors.New("Kerberos: требуются пакеты python3-gssapi и python3-samba")
+				return "", nil, errors.New("вход через Kerberos: требуются пакеты python3-gssapi и python3-samba")
 			case 3:
-				return "", nil, errors.New("Kerberos: проверьте права на keytab и наличие в нём принципала службы")
+				return "", nil, errors.New("вход через Kerberos: проверьте права на keytab и наличие в нём принципала службы")
 			}
 		}
-		return "", nil, fmt.Errorf("Kerberos: проверка билета: %w", err)
+		return "", nil, fmt.Errorf("вход через Kerberos: проверка билета: %w", err)
 	}
 	sid, reply, ok := bytes.Cut(output, []byte{'\n'})
 	if !ok || !validDomainUserSID(string(sid)) || len(reply) > maxWindowsTicket {
-		return "", nil, errors.New("Kerberos: неверный ответ службы проверки билетов")
+		return "", nil, errors.New("вход через Kerberos: неверный ответ службы проверки билетов")
 	}
 	return string(sid), reply, nil
 }
