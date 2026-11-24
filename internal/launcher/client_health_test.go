@@ -70,6 +70,8 @@ func TestClientHealthRetriesOnce(t *testing.T) {
 }
 
 func TestClientHealthLauncherDoesNotWaitForRemote(t *testing.T) {
+	savedBundle := launcherBundle
+	t.Cleanup(func() { launcherBundle = savedBundle })
 	unblock := make(chan struct{})
 	var attempts atomic.Int32
 	remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -100,9 +102,16 @@ func TestClientHealthLauncherDoesNotWaitForRemote(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { srv.Close() })
 	httpClient := &http.Client{Timeout: 1500 * time.Millisecond}
-	go func() { _ = srv.ListenAndServe() }()
+	done := make(chan error, 1)
+	go func() { done <- srv.ListenAndServe() }()
+	t.Cleanup(func() {
+		httpClient.CloseIdleConnections()
+		srv.Close()
+		if err := <-done; err != nil && err != http.ErrServerClosed {
+			t.Error(err)
+		}
+	})
 	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, srv.URL(), nil)
 	if err != nil {
 		t.Fatal(err)
