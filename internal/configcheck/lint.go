@@ -655,6 +655,7 @@ func formModuleYAMLSchema() *yamlLintSchema {
 		"title_from",
 		"hint_inline",
 		"choice_free_input",
+		"header_background", "header_border_color",
 	} {
 		element.keys[k] = nil
 	}
