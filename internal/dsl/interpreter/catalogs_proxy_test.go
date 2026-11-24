@@ -386,6 +386,27 @@ func TestCatalogProxy_DeleteByRef(t *testing.T) {
 	}
 }
 
+func TestCatalogProxy_MarkRejectsForeignReference(t *testing.T) {
+	root, _, _ := newCatalogsTestEnv()
+	proxy := root.Get("ТипЦен").(*CatalogProxy)
+	ref := *proxy.Get("Закупочная").(*Ref)
+	ref.Type = "ЕдиницыИзмерения"
+
+	for _, method := range []string{"ПометитьНаУдаление", "СнятьПометку"} {
+		t.Run(method, func(t *testing.T) {
+			defer func() {
+				raised := recover()
+				err, ok := raised.(userError)
+				want := method + "(ТипЦен): ожидается ссылка этого справочника"
+				if !ok || err.Msg != want {
+					t.Fatalf("ошибка = %#v, ожидалось %q", raised, want)
+				}
+			}()
+			proxy.CallMethod(method, []any{&ref})
+		})
+	}
+}
+
 // Без подключённого делетера удаление отказывает fail-closed, а не падает в
 // обходной db.Delete: путь мимо entityservice обходил бы хуки удаления и
 // проверку ссылок (issue #854).
