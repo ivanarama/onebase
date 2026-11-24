@@ -34,4 +34,7 @@ done
 # The client receives only the public TLS certificate and its test credentials.
 docker exec "$server" cat /tmp/erp.crt | docker run --rm -i \
     --network "$network" --hostname workstation \
-    -e TEST_AD_PASSWORD -e TEST_ADMIN_PASSWORD "$image" python3 /test/client.py
+    -e TEST_AD_PASSWORD -e TEST_ADMIN_PASSWORD "$image" python3 /test/client.py || {
+    docker logs --tail 60 "$server" >&2
+    exit 1
+}

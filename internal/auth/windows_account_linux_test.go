@@ -49,7 +49,7 @@ func TestResolveWinbindAccount(t *testing.T) {
 					return "", nil
 				}
 			}
-			gotSID, display, err := resolveWinbindAccount(account, wbinfo)
+			gotSID, display, err := resolveWinbindAccount(account, "EXAMPLE.TEST", wbinfo)
 			if tt.wantOK {
 				require.NoError(t, err)
 				require.Equal(t, sid, gotSID)
@@ -68,13 +68,28 @@ func TestResolveWinbindRejectsAmbiguousInputs(t *testing.T) {
 		"operator", `\operator`, `EXAMPLE\`, `EXAMPLE\x\y`, "EXAMPLE\\a\nb",
 		strings.Repeat("a", 256) + `\operator`, `EXAMPLE\` + strings.Repeat("п", 128),
 	} {
-		_, _, err := resolveWinbindAccount(name, func(string) (string, error) {
+		_, _, err := resolveWinbindAccount(name, "EXAMPLE.TEST", func(string) (string, error) {
 			t.Fatal("invalid input was sent to winbind")
 			return "", nil
 		})
 		require.Error(t, err)
 	}
 	unavailable := errors.New("winbind unavailable")
-	_, _, err := resolveWinbindAccount(`EXAMPLE\operator`, func(string) (string, error) { return "", unavailable })
+	_, _, err := resolveWinbindAccount(`EXAMPLE\operator`, "EXAMPLE.TEST", func(string) (string, error) { return "", unavailable })
 	require.ErrorIs(t, err, unavailable)
+}
+
+func TestWinbindBindingRequiresServiceRealm(t *testing.T) {
+	_, _, err := resolveWinbindAccount(`TRUSTED\operator`, "EXAMPLE.TEST", func(option string) (string, error) {
+		switch option {
+		case "--separator":
+			return `\`, nil
+		case "--domain-info=TRUSTED":
+			return "Name : TRUSTED\nAlt_Name : trusted.test\nActive Directory : Yes\nSID : S-1-5-21-1-2-3", nil
+		default:
+			t.Fatal("unexpected lookup outside the configured realm")
+			return "", nil
+		}
+	})
+	require.ErrorContains(t, err, "настроенного домена")
 }

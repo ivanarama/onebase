@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -14,10 +15,11 @@ import (
 func resolveWindowsAccount(ctx context.Context, name string) (string, string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	return resolveWinbindAccount(name, func(option string) (string, error) {
+	return resolveWinbindAccount(name, os.Getenv("ONEBASE_KRB5_REALM"), func(option string) (string, error) {
 		// Each option is constructed below. The account is a single option value,
 		// including when it contains spaces or starts with a dash.
 		cmd := exec.CommandContext(ctx, "/usr/bin/wbinfo", option) //nolint:gosec // G204: fixed binary, no shell.
+		cmd.Env = append(os.Environ(), "LC_ALL=C.UTF-8")
 		output, err := cmd.Output()
 		if err != nil {
 			return "", fmt.Errorf("не удалось определить учётную запись через winbind (wbinfo): %w", err)
@@ -26,13 +28,16 @@ func resolveWindowsAccount(ctx context.Context, name string) (string, string, er
 	})
 }
 
-func resolveWinbindAccount(name string, wbinfo func(string) (string, error)) (string, string, error) {
+func resolveWinbindAccount(name, realm string, wbinfo func(string) (string, error)) (string, string, error) {
 	domain, user, ok := strings.Cut(name, `\`)
 	// wbinfo parses both parts into Samba fstrings (256 bytes including NUL).
 	// Reject long names before wbinfo can silently look up a truncated account.
 	if !ok || domain == "" || user == "" || len(domain) >= 256 || len(user) >= 256 ||
 		strings.Contains(user, `\`) || strings.IndexFunc(name, unicode.IsControl) >= 0 {
 		return "", "", errors.New(`укажите учётную запись в формате ДОМЕН\пользователь`)
+	}
+	if realm == "" {
+		return "", "", errors.New("для входа через домен укажите ONEBASE_KRB5_REALM")
 	}
 	separator, err := wbinfo("--separator")
 	if err != nil {
@@ -53,9 +58,13 @@ func resolveWinbindAccount(name string, wbinfo func(string) (string, error)) (st
 		}
 	}
 	shortDomain := fields["Name"]
-	if fields["Active Directory"] != "Yes" || shortDomain == "" || len(shortDomain) >= 256 || strings.Contains(shortDomain, separator) ||
-		(!strings.EqualFold(domain, shortDomain) && !strings.EqualFold(domain, fields["Alt_Name"])) {
-		return "", "", errors.New("для привязки требуется учётная запись домена Active Directory")
+	dnsDomain := fields["Alt_Name"]
+	if fields["Active Directory"] != "Yes" || !strings.EqualFold(dnsDomain, realm) {
+		return "", "", errors.New("для привязки требуется учётная запись настроенного домена Active Directory")
+	}
+	if shortDomain == "" || len(shortDomain) >= 256 || strings.Contains(shortDomain, separator) ||
+		(!strings.EqualFold(domain, shortDomain) && !strings.EqualFold(domain, dnsDomain)) {
+		return "", "", errors.New("winbind вернул другой домен для указанной учётной записи")
 	}
 	lookup, err := wbinfo("--name-to-sid=" + shortDomain + separator + user)
 	if err != nil {

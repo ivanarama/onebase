@@ -24,8 +24,9 @@ samba-tool user create employee "$TEST_AD_PASSWORD"
 samba-tool user create colleague "$TEST_AD_PASSWORD"
 samba-tool user create svc-web --random-password
 samba-tool spn add HTTP/erp.onebase.test svc-web
-samba-tool domain exportkeytab /tmp/erp.keytab --principal=HTTP/erp.onebase.test
+samba-tool domain exportkeytab /tmp/erp.keytab --principal=HTTP/erp.onebase.test@ONEBASE.TEST
 chmod 600 /tmp/erp.keytab
+klist -k /tmp/erp.keytab | grep -F 'HTTP/erp.onebase.test@ONEBASE.TEST'
 samba --daemon
 
 for ((i=0; i<45; i++)); do

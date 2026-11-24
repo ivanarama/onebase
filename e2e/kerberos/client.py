@@ -51,7 +51,7 @@ def domain_login(user, certificate, work, expected):
         assert about.status_code == 200 and ">operator</span>" in about.text
         assert session.get(ORIGIN + "/ui/admin/users", timeout=10).status_code == 403
     else:
-        assert not session.cookies, f"{user}: unexpectedly received a session"
+        assert "onebase_session" not in session.cookies, f"{user}: unexpectedly received a session"
 
 
 def check(work):
