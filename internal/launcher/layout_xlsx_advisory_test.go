@@ -33,7 +33,12 @@ func TestImportXLSX_PublicAdvisories(t *testing.T) {
 				}
 				done := make(chan error, 1)
 				go func() { done <- srv.ListenAndServe() }()
-				defer func() { srv.Close(); <-done }()
+				defer func() {
+					srv.Close()
+					if err := <-done; err != nil && err != http.ErrServerClosed {
+						t.Error(err)
+					}
+				}()
 				var body bytes.Buffer
 				mw := multipart.NewWriter(&body)
 				for k, v := range map[string]string{"name": "Проверка", "document": "Реализация"} {
