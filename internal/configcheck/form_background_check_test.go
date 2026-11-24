@@ -135,6 +135,15 @@ func TestCheckFormBackground_ButtonSupported(t *testing.T) {
 	}
 }
 
+// У СтраницыФормы фон действует (весь набор), предупреждения нет.
+func TestCheckFormBackground_PagesSilent(t *testing.T) {
+	warns := CheckFormBackground(projWithElement(&metadata.FormElement{
+		Kind: metadata.FormElementPages, Name: "Закладки", Background: "#fffaf0"}))
+	if len(warns) != 0 {
+		t.Fatalf("background у СтраницыФормы не должен предупреждать: %+v", warns)
+	}
+}
+
 // Цвет шапки таблицы действует только у ТабличнаяЧасть; нераспознанный цвет
 // называется, допустимый — молча.
 func TestCheckFormBackground_TableHeaderColors(t *testing.T) {
