@@ -119,7 +119,7 @@ func (db *DB) fillInfoRegEditRevisions(ctx context.Context, ir *metadata.InfoReg
 	if invalidate {
 		condition = "1=1"
 	}
-	generator := "gen_random_uuid()::text"
+	generator := "pg_catalog.gen_random_uuid()::text"
 	if db.IsSQLite() {
 		generator = "ob_inforeg_edit_revision()"
 	}
