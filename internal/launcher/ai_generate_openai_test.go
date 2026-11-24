@@ -103,7 +103,12 @@ func TestConfiguratorAIGenerateOpenAIToolRoundTrip(t *testing.T) {
 	}
 	done := make(chan error, 1)
 	go func() { done <- srv.ListenAndServe() }()
-	t.Cleanup(func() { srv.Close(); <-done })
+	t.Cleanup(func() {
+		srv.Close()
+		if err := <-done; err != nil && err != http.ErrServerClosed {
+			t.Error(err)
+		}
+	})
 	url := srv.URL() + "/bases/" + base.ID + "/configurator/ai-generate"
 	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, url, strings.NewReader(`{"prompt":"Создай справочник Клиент"}`))
 	if err != nil {
