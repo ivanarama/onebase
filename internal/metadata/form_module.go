@@ -233,7 +233,7 @@ type FormElement struct {
 	// и половина кнопок читается как отдельный блок. По умолчанию перенос, как
 	// было.
 	ScrollX    bool   `yaml:"scroll_x,omitempty"`
-	Background string `yaml:"background,omitempty"` // фон контейнера; читается только у ГруппаФормы (#1547), цвет проверяет csssafe.Color
+	Background string `yaml:"background,omitempty"` // фон: ГруппаФормы (#1547), СтраницыФормы (весь набор с полосой закладок), Кнопка; цвет проверяет csssafe.Color
 	// TextColor — цвет текста поля ввода или надписи (подпись и значение,
 	// у нередактируемого поля тоже); цвет проверяет csssafe.Color, как у
 	// background. Importance — смысловое выделение вместо конкретного цвета:
