@@ -1,11 +1,14 @@
 package auth
 
 import (
+	"context"
 	"encoding/base64"
 	"errors"
 	"net"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 )
@@ -13,10 +16,17 @@ import (
 // Kerberos tickets containing group memberships can exceed 16 KiB.
 const maxWindowsTicket = 64 << 10
 
+// WindowsAccountsSupported reports whether this host can be configured to bind
+// Windows users. Linux installations opt in with an AD realm and a service keytab.
+func WindowsAccountsSupported() bool {
+	return runtime.GOOS == "windows" || (runtime.GOOS == "linux" &&
+		strings.TrimSpace(os.Getenv("ONEBASE_KRB5_REALM")) != "" && filepath.IsAbs(os.Getenv("ONEBASE_KRB5_KEYTAB")))
+}
+
 // WindowsLoginAvailable describes the transport on which the browser may
 // attempt Integrated Authentication. Forwarded headers never enable it.
 func (h *Handlers) WindowsLoginAvailable(r *http.Request) bool {
-	return runtime.GOOS == "windows" && h.windowsLoginTransport(r)
+	return WindowsAccountsSupported() && h.windowsLoginTransport(r)
 }
 
 func (h *Handlers) windowsLoginTransport(r *http.Request) bool {
@@ -48,7 +58,7 @@ func (h *Handlers) WindowsLogin(w http.ResponseWriter, r *http.Request) {
 	h.negotiateWindows(w, r, acceptWindowsTicket)
 }
 
-func (h *Handlers) negotiateWindows(w http.ResponseWriter, r *http.Request, accept func(string, []byte) (string, []byte, error)) {
+func (h *Handlers) negotiateWindows(w http.ResponseWriter, r *http.Request, accept func(context.Context, string, []byte) (string, []byte, error)) {
 	w.Header().Set("Cache-Control", "no-store, private")
 	authorization := r.Header.Get("Authorization")
 	if authorization == "" {
@@ -66,7 +76,7 @@ func (h *Handlers) negotiateWindows(w http.ResponseWriter, r *http.Request, acce
 		w.WriteHeader(http.StatusForbidden)
 		return
 	}
-	sid, reply, err := accept(h.WindowsSPN, ticket)
+	sid, reply, err := accept(r.Context(), h.WindowsSPN, ticket)
 	if err != nil || sid == "" {
 		// Do not log tokens or issue a new challenge (which could cause a
 		// password prompt/loop for clients that fell back to NTLM).
@@ -80,8 +90,8 @@ func (h *Handlers) negotiateWindows(w http.ResponseWriter, r *http.Request, acce
 	h.finishWindowsLogin(w, r, sid, r.URL.Query().Get("return"), "", true)
 }
 
-// finishWindowsLogin receives a SID already established by SSPI or the local
-// launcher handoff. Each sign-in, including completion after MFA, must still
+// finishWindowsLogin receives a SID established by the Kerberos acceptor or
+// the local launcher. Each sign-in, including completion after MFA, must still
 // match an active user in this database.
 func (h *Handlers) finishWindowsLogin(w http.ResponseWriter, r *http.Request, sid, returnURL, expectedUserID string, jsonResponse bool) {
 	w.Header().Set("Cache-Control", "no-store, private")

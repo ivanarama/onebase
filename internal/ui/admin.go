@@ -6,7 +6,6 @@ import (
 	"html/template"
 	"net/http"
 	"net/url"
-	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -115,7 +114,7 @@ const tplAdminUserCard = `{{define "admin-user-card"}}` + adminHead + `
 </form>
 </div>
 
-{{if or .WindowsHost .User.WindowsAccount}}
+{{if or .WindowsAccountsSupported .User.WindowsAccount}}
 <div class="card" style="max-width:560px;margin-bottom:16px">
 <form method="POST">
   <input type="hidden" name="action" value="windows_account">
@@ -288,7 +287,7 @@ func (s *Server) adminUserCard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	data := map[string]any{
-		"User": u, "WindowsHost": runtime.GOOS == "windows",
+		"User": u, "WindowsAccountsSupported": auth.WindowsAccountsSupported(),
 		"DatabaseAccessLabel": s.tr(lang, "Доступ к базе"),
 		"DisabledLabel":       s.tr(lang, "Учётная запись отключена"),
 		"SaveStatusLabel":     s.tr(lang, "Сохранить состояние"),

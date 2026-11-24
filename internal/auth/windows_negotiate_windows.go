@@ -3,6 +3,7 @@
 package auth
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"syscall"
@@ -24,7 +25,7 @@ var querySecurityContextToken = windows.NewLazySystemDLL("secur32.dll").NewProc(
 // acceptWindowsTicket принимает одношаговый Kerberos AP-REQ в оболочке
 // Negotiate. Контекст принадлежит только этому запросу. SEC_I_CONTINUE_NEEDED
 // (включая NTLM) не выдаёт сеанс и не оставляет незавершённого обмена.
-func acceptWindowsTicket(spn string, ticket []byte) (string, []byte, error) {
+func acceptWindowsTicket(_ context.Context, spn string, ticket []byte) (string, []byte, error) {
 	// Resolve secur32 from the system directory before using SSPI wrappers.
 	if err := querySecurityContextToken.Find(); err != nil {
 		return "", nil, err

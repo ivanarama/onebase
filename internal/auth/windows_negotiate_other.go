@@ -1,9 +1,12 @@
-//go:build !windows
+//go:build !windows && !linux
 
 package auth
 
-import "errors"
+import (
+	"context"
+	"errors"
+)
 
-func acceptWindowsTicket(_ string, _ []byte) (string, []byte, error) {
-	return "", nil, errors.New("SSPI доступен только на Windows")
+func acceptWindowsTicket(context.Context, string, []byte) (string, []byte, error) {
+	return "", nil, errors.New("вход через Windows не поддерживается на этой платформе")
 }

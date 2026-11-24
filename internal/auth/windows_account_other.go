@@ -1,9 +1,12 @@
-//go:build !windows
+//go:build !windows && !linux
 
 package auth
 
-import "errors"
+import (
+	"context"
+	"errors"
+)
 
-func resolveWindowsAccount(string) (string, string, error) {
-	return "", "", errors.New("для привязки учётной записи требуется Windows")
+func resolveWindowsAccount(context.Context, string) (string, string, error) {
+	return "", "", errors.New("эта ОС не поддерживает привязку учётной записи Windows")
 }

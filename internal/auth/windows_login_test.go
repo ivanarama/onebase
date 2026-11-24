@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -64,7 +65,7 @@ func TestNegotiateOnlyAcceptsVerifiedTicket(t *testing.T) {
 		req.Header.Set("X-Remote-User", admin.Login)
 		req.Header.Set("X-Windows-SID", boundSID)
 		rec := httptest.NewRecorder()
-		h.negotiateWindows(rec, req, func(spn string, ticket []byte) (string, []byte, error) {
+		h.negotiateWindows(rec, req, func(_ context.Context, spn string, ticket []byte) (string, []byte, error) {
 			if spn != h.WindowsSPN {
 				t.Fatal("incorrect service principal")
 			}
