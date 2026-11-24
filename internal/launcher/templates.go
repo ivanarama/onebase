@@ -1181,6 +1181,19 @@ function startBaseNative(el, id) {
     });
   return false;
 }
+// Esc закрывает окно с ошибкой: причина уже прочитана, а лечение — дело
+// добровольное. Обработчик отдельный от диалога закрытия лаунчера: тот
+// выходит раньше, когда его собственное окно скрыто.
+document.addEventListener('keydown', function(ev) {
+  var modal = document.getElementById('start-error-modal');
+  if (!modal || modal.style.display !== 'flex') return;
+  if (ev.key !== 'Escape') return;
+  if (ev.preventDefault) ev.preventDefault();
+  if (ev.stopPropagation) ev.stopPropagation();
+  closeStartError();
+});
+</script>
+<script>
 document.querySelectorAll('[data-client-probe]').forEach(function (badge) {
   var id = badge.getAttribute('data-client-probe');
   var tries = 0;
@@ -1203,17 +1216,6 @@ document.querySelectorAll('[data-client-probe]').forEach(function (badge) {
       });
   }
   setTimeout(refresh, 500);
-});
-// Esc закрывает окно с ошибкой: причина уже прочитана, а лечение — дело
-// добровольное. Обработчик отдельный от диалога закрытия лаунчера: тот
-// выходит раньше, когда его собственное окно скрыто.
-document.addEventListener('keydown', function(ev) {
-  var modal = document.getElementById('start-error-modal');
-  if (!modal || modal.style.display !== 'flex') return;
-  if (ev.key !== 'Escape') return;
-  if (ev.preventDefault) ev.preventDefault();
-  if (ev.stopPropagation) ev.stopPropagation();
-  closeStartError();
 });
 </script>
 </body></html>
