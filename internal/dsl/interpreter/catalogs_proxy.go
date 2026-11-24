@@ -483,8 +483,11 @@ func (p *CatalogProxy) markRefCall(call string, args []any, mark bool) {
 		RaiseUserError(call + "(" + p.entity.Name + "): не передана ссылка")
 	}
 	ref, ok := args[0].(*Ref)
-	if !ok {
+	if !ok || ref == nil {
 		RaiseUserError(fmt.Sprintf("%s(%s): ожидается ссылка, получено %T", call, p.entity.Name, args[0]))
+	}
+	if ref.Kind != p.entity.Kind || !strings.EqualFold(ref.Type, p.entity.Name) {
+		RaiseUserError(fmt.Sprintf("%s(%s): ожидается ссылка этого справочника", call, p.entity.Name))
 	}
 	id, err := uuid.Parse(ref.UUID)
 	if err != nil {
