@@ -113,6 +113,7 @@ type handler struct {
 	// (start/stop/…) сбрасывают запись базы, чтобы статус обновился сразу.
 	statusMu      sync.Mutex
 	statusCache   map[string]baseStatus
+	clientProbes  map[string]*Base
 	statusTimeout time.Duration
 	// statusReadAppYAML синхронизирует тест таймаута; в production всегда nil.
 	statusReadAppYAML func(context.Context, *Base, any) error
@@ -135,6 +136,8 @@ type handler struct {
 // baseStatus — закэшированный результат дорогих проверок одной базы.
 type baseStatus struct {
 	running    bool
+	probing    bool
+	problem    clientProbeIssue
 	appName    string
 	appVersion string
 	hasLogo    bool
@@ -155,6 +158,8 @@ const (
 type baseVM struct {
 	*Base
 	Running    bool
+	Probing    bool
+	Problem    string
 	BaseURL    string
 	AppName    string
 	AppVersion string
@@ -162,9 +167,8 @@ type baseVM struct {
 }
 
 // baseStatuses возвращает статусы всех баз, обновляя протухшие записи кэша
-// ПАРАЛЛЕЛЬНО и с общим TTL. Раньше рендер списка синхронно и последовательно
-// пробовал каждую базу (/health до 1.5с + открытие БД у database-баз), и цена
-// линейно росла с числом баз, повторяясь на каждом `/?sel=` (issue #596).
+// параллельно и с общим TTL. Удалённые базы проверяются в фоне: рендер списка
+// не ждёт сетевых запросов. Для локальных баз здесь обновляются данные app.yaml.
 func (h *handler) baseStatuses(bases []*Base) map[string]baseStatus {
 	now := time.Now()
 	h.statusMu.Lock()
@@ -174,7 +178,11 @@ func (h *handler) baseStatuses(bases []*Base) map[string]baseStatus {
 	var stale []*Base
 	for _, b := range bases {
 		if st, ok := h.statusCache[b.ID]; !ok || now.Sub(st.fetched) > baseStatusTTL {
-			stale = append(stale, b)
+			if b.Client() {
+				h.startClientProbeLocked(b)
+			} else {
+				stale = append(stale, b)
+			}
 		}
 	}
 	h.statusMu.Unlock()
@@ -219,15 +227,6 @@ func (h *handler) probeBase(b *Base) baseStatus {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	// Клиентское подключение: «работает» означает «сервер отвечает». Читать
-	// app.yaml не идём — ни DSN, ни каталога конфигурации у записи нет, а имя и
-	// логотип базы лаунчер здесь берёт именно оттуда. Показать их для серверной
-	// записи можно будет, когда у сервера появится публичный ответ с этими
-	// полями; выдумывать их из адреса нечестно.
-	if b.Client() {
-		return baseStatus{running: clientServerReachable(ctx, b, h.clientProbeClient), fetched: time.Now()}
-	}
-
 	st := baseStatus{running: h.baseRunning(b), fetched: time.Now()}
 	var cfg struct {
 		Name    string `yaml:"name"`
@@ -253,6 +252,7 @@ func (h *handler) probeBase(b *Base) baseStatus {
 func (h *handler) invalidateStatus(baseID string) {
 	h.statusMu.Lock()
 	delete(h.statusCache, baseID)
+	delete(h.clientProbes, baseID)
 	h.statusMu.Unlock()
 }
 
@@ -260,6 +260,7 @@ func (h *handler) invalidateStatus(baseID string) {
 func (h *handler) clearStatus() {
 	h.statusMu.Lock()
 	h.statusCache = map[string]baseStatus{}
+	h.clientProbes = nil
 	h.statusMu.Unlock()
 }
 
@@ -278,8 +279,8 @@ func (h *handler) index(w http.ResponseWriter, r *http.Request) {
 	vms := make([]*baseVM, 0, len(bases))
 	for _, b := range bases {
 		st := statuses[b.ID]
-		vm := &baseVM{Base: b, Running: st.running, BaseURL: h.runner.BaseURL(b),
-			AppName: st.appName, AppVersion: st.appVersion}
+		vm := &baseVM{Base: b, Running: st.running, Probing: st.probing, Problem: string(st.problem),
+			BaseURL: h.runner.BaseURL(b), AppName: st.appName, AppVersion: st.appVersion}
 		if st.hasLogo {
 			vm.LogoBase64 = "/bases/" + b.ID + "/configurator/logo"
 		}
@@ -614,6 +615,7 @@ func (h *handler) update(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 500)
 		return
 	}
+	h.invalidateStatus(b.ID)
 	http.Redirect(w, r, "/?sel="+b.ID, http.StatusFound)
 }
 

@@ -1,12 +1,9 @@
 package launcher
 
 import (
-	"context"
 	"errors"
-	"net/http"
 	"net/url"
 	"strings"
-	"time"
 )
 
 // Клиентское подключение: запись списка баз, которая описывает УЖЕ РАБОТАЮЩИЙ
@@ -79,42 +76,6 @@ func normalizeServerURL(raw string) (string, error) {
 	// Хвостовой слэш убираем здесь, чтобы ниже по коду адрес складывался с
 	// путями («/ui») без двойного разделителя.
 	return u.Scheme + "://" + u.Host, nil
-}
-
-// clientServerProbeTimeout — предел одной проверки доступности сервера. Список
-// баз рисуется по кэшу статусов с общим TTL, но сама проверка не должна держать
-// рендер: недоступный сервер обязан показаться недоступным быстро.
-const clientServerProbeTimeout = 2 * time.Second
-
-// clientServerReachable отвечает, отзывается ли сервер клиентского подключения.
-//
-// Это проверка ДОСТУПНОСТИ, а не подлинности: подтверждать identity здесь нечем
-// и не нужно — процессом владеет не лаунчер, у него нет control-token, и
-// открываем мы адрес, который администратор задал сам. Единственный смысл
-// ответа — индикатор в списке: «сервер отвечает» против «не отвечает».
-//
-// Ошибку сознательно не различаем: недоступность по сети, отказ TLS и 5xx для
-// индикатора — одно и то же состояние «работать нельзя». Разбираться, почему
-// именно, пользователь пойдёт в журнал сервера, а не в список баз.
-func clientServerReachable(ctx context.Context, base *Base, client *http.Client) bool {
-	if base == nil || !base.Client() {
-		return false
-	}
-	if client == nil {
-		client = &http.Client{Timeout: clientServerProbeTimeout}
-	}
-	ctx, cancel := context.WithTimeout(ctx, clientServerProbeTimeout)
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base.ServerURL+"/health", nil)
-	if err != nil {
-		return false
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return false
-	}
-	defer func() { _ = resp.Body.Close() }()
-	return resp.StatusCode >= 200 && resp.StatusCode < 500
 }
 
 // baseKindClient — значение переключателя вида записи в форме базы.
