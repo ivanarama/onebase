@@ -975,9 +975,10 @@ function cfgSettingsSave(){
   var net=document.getElementById('st-net').checked;
   var exec=document.getElementById('st-exec').checked;
   var fm=document.getElementById('form_open_mode').value;
+  var fml=document.getElementById('st-formlock').checked;
   var pwlen=document.getElementById('st-pwlen').value;
   var pwempty=document.getElementById('st-pwempty').checked;
-  fetch('/bases/%s/configurator/admin/settings/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({list_page_size:n,collapsible_nav:c,network_enabled:net,exec_enabled:exec,form_open_mode:fm,password_min_length:pwlen,allow_empty_passwords:pwempty})})
+  fetch('/bases/%s/configurator/admin/settings/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({list_page_size:n,collapsible_nav:c,network_enabled:net,exec_enabled:exec,form_open_mode:fm,form_open_mode_locked:fml,password_min_length:pwlen,allow_empty_passwords:pwempty})})
     .then(function(r){return r.json()})
     .then(function(d){
       var m=document.getElementById('st-msg');
@@ -998,6 +999,10 @@ function cfgSettingsSave(){
 }
 </script>`, jsText(b.ID), jsText(tr(lang, "Сохранено")), jsText(tr(lang, "Ошибка")), jsText(tr(lang, "Ошибка сети")))
 	formMode := db.GetFormOpenMode(r.Context())
+	lockChecked := ""
+	if db.GetFormOpenModeLocked(r.Context()) {
+		lockChecked = "checked"
+	}
 	pagesSel, tabsSel := "", ""
 	if formMode == storage.FormModeTabs {
 		tabsSel = "selected"
@@ -1027,6 +1032,11 @@ function cfgSettingsSave(){
 	    </select>
 	  </label>
 	  <div style="font-size:11px;color:#666;margin-top:6px">Дефолт для пользователей без личной настройки. «Вкладки» открывают формы в оболочке <code>/ui/app</code>, «Отдельные страницы» — как обычные страницы <code>/ui</code>. Каждый пользователь может переопределить это в «Параметрах».</div>
+	  <label style="font-size:12px;display:flex;align-items:center;gap:8px;margin-top:10px">
+	    <input type="checkbox" id="st-formlock" %s>
+	    Закрепить режим: пользователи не меняют его
+	  </label>
+	  <div style="font-size:11px;color:#666;margin-top:6px">Личные настройки режима перестают действовать, переключатель «Вкладки/Страницы» у пользователей скрыт. Режим выше меняет только администратор.</div>
 	  <div style="font-size:13px;font-weight:600;margin:16px 0 8px">Безопасность</div>
 	  <label style="font-size:12px;display:flex;align-items:center;gap:8px">
 	    <input type="checkbox" id="st-net" %s>
@@ -1041,7 +1051,7 @@ function cfgSettingsSave(){
 	  %s
 	</div>
 </div>
-%s`, storage.MaxListPageSize, pageSize, storage.MaxListPageSize, navChecked, pagesSel, tabsSel, netChecked, execChecked,
+%s`, storage.MaxListPageSize, pageSize, storage.MaxListPageSize, navChecked, pagesSel, tabsSel, lockChecked, netChecked, execChecked,
 		passwordSection, settingsScript)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	writeBody(w, []byte(html))
@@ -1062,6 +1072,7 @@ func (h *handler) cfgAdminSettingsSave(w http.ResponseWriter, r *http.Request) {
 		NetworkEnabled      *bool           `json:"network_enabled"`
 		ExecEnabled         *bool           `json:"exec_enabled"`
 		FormOpenMode        string          `json:"form_open_mode"`
+		FormOpenModeLocked  *bool           `json:"form_open_mode_locked"`
 		PasswordMinLength   json.RawMessage `json:"password_min_length"`
 		AllowEmptyPasswords *bool           `json:"allow_empty_passwords"`
 	}
@@ -1107,6 +1118,12 @@ func (h *handler) cfgAdminSettingsSave(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.FormOpenMode != "" {
 		if err := db.SaveFormOpenMode(r.Context(), req.FormOpenMode); err != nil {
+			writeJSON(w, 500, map[string]any{"error": err.Error()})
+			return
+		}
+	}
+	if req.FormOpenModeLocked != nil {
+		if err := db.SaveFormOpenModeLocked(r.Context(), *req.FormOpenModeLocked); err != nil {
 			writeJSON(w, 500, map[string]any{"error": err.Error()})
 			return
 		}

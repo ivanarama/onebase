@@ -21,6 +21,7 @@ import (
 // no endpoint response, selected_allowed result or client function is mocked.
 func TestChoiceFilterBrowserAcceptance(t *testing.T) {
 	browseracceptance.Require(t)
+	t.Run("source-copies", TestChoiceSourceCopiesBrowserAcceptance)
 	f := newChoiceHTTPFixture(t)
 	f.target.Hierarchical = true
 	if err := f.server.store.Migrate(context.Background(), []*metadata.Entity{f.target}); err != nil {

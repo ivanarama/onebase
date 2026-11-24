@@ -1,0 +1,9 @@
+{
+  "schema": "pp-positive-review-golden-origin-v1",
+  "source_head": "67e4ca7b34ecc103d95ddb0f7c83ccc6f236e1b0",
+  "producer_test_git_blob": "b748c4358f91144529226697126f6bb9aff3cb89",
+  "file": "positive-review-v1.json",
+  "sha256": "71614d00dc5472563e9badc80a0e11c74d5b30e83ffa5426b35ef57513a1cfab",
+  "case_count": 21,
+  "purpose": "Measured public CLI source vectors; not production authority"
+}

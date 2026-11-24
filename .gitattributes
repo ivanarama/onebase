@@ -9,6 +9,14 @@
 # roundtrip-тесты падают на «expected LF, got CRLF».
 internal/onec_forms/fixtures/* -text !eol
 
+# Protocol goldens are exact upstream Git-blob bytes; their SHA-256 manifests
+# must be identical in LF and Windows autocrlf checkouts.
+internal/reviewrouting/testdata/*.json text eol=lf
+
+# The embedded compatibility registry includes raw JSON examples in generated
+# Markdown, which must match the LF documentation on every checkout platform.
+internal/onec_forms/compatibility_contracts.json text eol=lf
+
 # Вендоренный Monaco — минифицированные ассеты, храним байт-в-байт без
 # нормализации EOL, чтобы апгрейд версии давал чистый предсказуемый diff.
 internal/webassets/monaco/** -text !eol

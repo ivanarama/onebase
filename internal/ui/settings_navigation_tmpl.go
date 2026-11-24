@@ -41,15 +41,21 @@ const tplNavigationSettings = `
 <p>{{t .Lang "Перемещайте узлы кнопками или перетаскиванием. Alt + стрелки: выше, ниже, внутрь папки, из папки."}}</p>
 <h2>{{t .Lang "Предпросмотр меню"}}</h2><div id="navigation-preview"></div></section>
 <aside class="card"><h2>{{t .Lang "Доступные объекты"}}</h2>
-<label>{{t .Lang "Поиск"}} <input id="navigation-filter" type="search"></label><div id="navigation-palette"></div></aside>
+<label>{{t .Lang "Поиск среди неразмещённых объектов"}} <input id="navigation-filter" type="search" aria-describedby="navigation-palette-hint"></label>
+<p id="navigation-palette-hint">{{t .Lang "Здесь только объекты, которых нет в структуре меню. Скрытый объект можно вернуть в меню."}}</p>
+<div id="navigation-palette" aria-live="polite"></div></aside>
 </div>
 </main></div>
 <style>
 .navigation-editor-layout{display:grid;grid-template-columns:minmax(0,1fr)minmax(240px,320px);gap:16px;margin:16px 0}
 .navigation-editor-layout .card{padding:16px}.navigation-row{display:flex;align-items:center;gap:6px;padding:6px;flex-wrap:wrap;border-bottom:1px solid #ddd}
-.navigation-row button:first-child{flex:1;text-align:left;min-width:120px}.navigation-row[data-kind=group]{margin-left:18px}.navigation-row[data-kind=item]{margin-left:36px}
+.navigation-row button:first-child{flex:1 1 160px;text-align:left;min-width:120px;max-width:100%;font-family:inherit;font-size:1rem;overflow-wrap:anywhere}
+.navigation-row[data-kind=section] button:first-child{font-size:1.05rem;font-weight:700}.navigation-row[data-kind=group] button:first-child{font-weight:600}
+.navigation-row[data-kind=group]{margin-left:18px}.navigation-row[data-kind=item]{margin-left:36px}
 .navigation-row.selected{background:#e8f0fe}.navigation-row:focus-within{outline:2px solid #2563eb}
 #navigation-properties label{display:flex;gap:6px;margin:10px 0;align-items:center}#navigation-palette>div{display:flex;gap:6px;padding:6px;align-items:center}#navigation-palette span{flex:1;overflow-wrap:anywhere}
+#navigation-palette [data-kind=section]>span{font-weight:700}#navigation-palette [data-kind=group]>span{font-weight:600}
+#navigation-preview{font-size:1rem;overflow-wrap:anywhere}#navigation-preview h3{font-size:1.05em;font-weight:700}#navigation-preview summary{font-size:1em;font-weight:600}
 @media(max-width:850px){.navigation-editor-layout{grid-template-columns:1fr}}
 </style>
 <script type="application/json" id="navigation-editor-data">{{jsJSON .NavigationEditor}}</script>

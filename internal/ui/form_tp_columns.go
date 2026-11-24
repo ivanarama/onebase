@@ -193,3 +193,110 @@ func managedTPColumnEvents(plan []managedTPColumn, readOnly bool) map[string]str
 	}
 	return events
 }
+
+// managedTPColumnTitleFrom — заголовок колонки из реквизита title_from: его
+// строковое значение, если оно не пусто. Значения — шапка формы (поля
+// объекта и реквизиты формы); имя сравнивается без учёта регистра.
+func managedTPColumnTitleFrom(element *metadata.FormElement, values any) (string, bool) {
+	if element == nil || strings.TrimSpace(element.TitleFrom) == "" {
+		return "", false
+	}
+	name := metadata.FormTitleSourceName(element.TitleFrom)
+	var raw any
+	found := false
+	switch typed := values.(type) {
+	case map[string]string:
+		for key, value := range typed {
+			if strings.EqualFold(key, name) {
+				raw, found = value, true
+				break
+			}
+		}
+	case map[string]any:
+		for key, value := range typed {
+			if strings.EqualFold(key, name) {
+				raw, found = value, true
+				break
+			}
+		}
+	}
+	if !found {
+		return "", false
+	}
+	title, ok := raw.(string)
+	if !ok {
+		return "", false
+	}
+	title = strings.TrimSpace(title)
+	return title, title != ""
+}
+
+// managedTPColumnsTitled подставляет заголовки из title_from в план колонок для
+// отрисовки. Исходный план не меняется: его же разделяют другие вызовы шаблона.
+func managedTPColumnsTitled(plan []managedTPColumn, values any) []managedTPColumn {
+	var out []managedTPColumn
+	for i, column := range plan {
+		title, ok := managedTPColumnTitleFrom(column.Element, values)
+		if !ok {
+			continue
+		}
+		if out == nil {
+			out = append([]managedTPColumn(nil), plan...)
+		}
+		field := out[i].Field
+		field.Title = title
+		field.Titles = nil
+		out[i].Field = field
+	}
+	if out == nil {
+		return plan
+	}
+	return out
+}
+
+// managedTPColumnTitles — заголовки колонок с title_from для ответа события:
+// «путь размещения ТЧ → реквизит → заголовок». Путь совпадает с data-sg-path
+// при отрисовке и различает повторяющиеся и пустые имена элементов.
+// Пустой источник возвращает колонке её статичный заголовок.
+func managedTPColumnTitles(form *metadata.FormModule, entity *metadata.Entity, values map[string]any, lang string) map[string]map[string]string {
+	if form == nil || entity == nil {
+		return nil
+	}
+	var out map[string]map[string]string
+	walkBrowserFormElements(form, func(visit browserFormElementVisit) {
+		el := visit.element
+		if el.Kind != metadata.FormElementTablePart {
+			return
+		}
+		tp := entityTablePartByName(entity, dpFieldName(el.DataPath))
+		if tp == nil {
+			return
+		}
+		for _, column := range managedTPColumnPlan(el, tp.Fields) {
+			if column.Element == nil || strings.TrimSpace(column.Element.TitleFrom) == "" {
+				continue
+			}
+			title, ok := managedTPColumnTitleFrom(column.Element, values)
+			if !ok {
+				title = column.Field.DisplayName(lang)
+			}
+			if out == nil {
+				out = map[string]map[string]string{}
+			}
+			if out[visit.path] == nil {
+				out[visit.path] = map[string]string{}
+			}
+			out[visit.path][column.Field.Name] = title
+		}
+	})
+	return out
+}
+
+func entityTablePartByName(entity *metadata.Entity, name string) *metadata.TablePart {
+	for i := range entity.TableParts {
+		if strings.EqualFold(entity.TableParts[i].Name, name) {
+			return &entity.TableParts[i]
+		}
+	}
+	return nil
+}

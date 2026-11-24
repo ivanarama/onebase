@@ -1,0 +1,32 @@
+{
+  "schema": "pp-review-routing-consumer-tree-golden-v1",
+  "files": {
+    "review-queue/SKILL.md": "\r\n<!-- pp:review-routing-v1-consumer stage=review -->\r\n",
+    "review-queue/references/тест😀.md": "exact UTF-8 contents <>&  \n",
+    "review-queue/__pycache__/ignored.md": "ignored by both readers\n",
+    "review-queue/ignored.pyc": "ignored Python bytecode fixture\n",
+    "review-queue/compiled.pyc/retained.md": "descendants of a .pyc directory still participate\n",
+    "fix-approved/SKILL.md": "\r\n<!-- pp:review-routing-v1-consumer stage=fix -->\r\n",
+    "fix-approved/references/тест😀.md": "exact UTF-8 contents <>&  \n",
+    "fix-approved/__pycache__/ignored.md": "ignored by both readers\n",
+    "fix-approved/ignored.pyc": "ignored Python bytecode fixture\n",
+    "fix-approved/compiled.pyc/retained.md": "descendants of a .pyc directory still participate\n",
+    "merge-shepherd/SKILL.md": "\r\n<!-- pp:review-routing-v1-consumer stage=merge -->\r\n",
+    "merge-shepherd/references/тест😀.md": "exact UTF-8 contents <>&  \n",
+    "merge-shepherd/__pycache__/ignored.md": "ignored by both readers\n",
+    "merge-shepherd/ignored.pyc": "ignored Python bytecode fixture\n",
+    "merge-shepherd/compiled.pyc/retained.md": "descendants of a .pyc directory still participate\n",
+    "tail-issues/SKILL.md": "\r\n<!-- pp:review-routing-v1-consumer stage=tail -->\r\n",
+    "tail-issues/references/тест😀.md": "exact UTF-8 contents <>&  \n",
+    "tail-issues/__pycache__/ignored.md": "ignored by both readers\n",
+    "tail-issues/ignored.pyc": "ignored Python bytecode fixture\n",
+    "tail-issues/compiled.pyc/retained.md": "descendants of a .pyc directory still participate\n"
+  },
+  "reader_sha256": {
+    "review": "13ee1f54925c68ba93d0a5e2736e07ee7cbd37533ecde35bb81a7b99274c9466",
+    "fix": "0244de65b44e71b525ad2fca86ee7ff709b0c749886bf5045a8cbf8e56512516",
+    "merge": "c01e25d2dd1f5fb4dc78ec808ebc9de71ae8972746f943f623af4fdbecd8dc12",
+    "tail": "0551e919b0210807de6cf35325764b4b77434d076d778bdefbacd45ef1296a58"
+  },
+  "source_sha256": "8def5a2fcc2dfbad02a5893b5b2a266bbf58ab113fc91905dd1537387b753a66"
+}

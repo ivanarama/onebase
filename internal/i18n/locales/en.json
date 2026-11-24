@@ -1,5 +1,11 @@
 {
   "Выгрузка в Excel отменена: текст ячейки превышает лимит %d единиц UTF-16. Файл не создан.": "Excel export cancelled: cell text exceeds the limit of %d UTF-16 units. No file was created.",
+  "поле %s локального источника %s не разрешено однозначно; внешнее поле затенено": "Field %s of local source %s cannot be resolved unambiguously; the outer field is shadowed",
+  "Строковый доступ по карточке сотрудника": "Row access from an employee card",
+  "Настройте источник в YAML роли. Для набора из ТЧ используйте in/not_in; пустой или невалидный набор закрывает политику целиком. Матрица прав сохраняет эту настройку. Карточки и их филиалы должен изменять только администратор.": "Configure the source in the role YAML. Use in/not_in for a table-part set; an empty or invalid set denies the whole policy. The permission matrix preserves this setting. Only administrators should change the cards and their branches.",
+  "Поиск среди неразмещённых объектов": "Search unplaced objects",
+  "Здесь только объекты, которых нет в структуре меню. Скрытый объект можно вернуть в меню.": "Only objects missing from the menu structure appear here. Hidden objects can be restored to the menu.",
+  "Все доступные объекты уже размещены": "All available objects are already placed",
   "у локального источника %s нет ссылочного реквизита %s; внешняя ссылка затенена": "Local source %s has no reference field %s; the outer reference is shadowed",
   "временный каталог загрузок": "temporary upload directory",
   "временный файл параметра %s": "temporary file for parameter %s",
@@ -866,6 +872,7 @@
   "Соединения (JOIN)": "Joins",
   "Создано": "Created",
   "Создать": "Create",
+  "%s (создание)": "%s (new)",
   "Создать бэкап сейчас": "Create backup now",
   "Создать макет": "Create layout",
   "Создать макет из PDF": "Create layout from PDF",
@@ -1518,6 +1525,7 @@
   "Оператор": "Operator",
   "Поле формы (from)": "Form field (from)",
   "Постоянная ссылка (ref)": "Fixed reference (ref)",
+  "Условие запросом — правится в YAML формы:": "Query condition — edit it in the form YAML:",
   "UUID записи справочника": "Catalog record UUID",
   "Условия идут по порядку и соединяются через И. Для подбора обязателен уникальный id выше.": "Conditions are evaluated in order and joined with AND. A unique element ID above is required for filtering.",
   "Устойчивый id элемента": "Stable element ID",
@@ -1601,5 +1609,8 @@
   "Область просмотра изображения": "Image viewport",
   "Изменённая сборка": "Modified distribution",
   "Поставщик сборки": "Distribution supplier",
-  "Переводы поля «%s» для языка %s изменены по-разному в двух редакторах. Укажите одинаковое значение и сохраните снова": "The translation of field \"%s\" for language %s was changed differently in the two editors. Enter the same value and save again"
+  "Переводы поля «%s» для языка %s изменены по-разному в двух редакторах. Укажите одинаковое значение и сохраните снова": "The translation of field \"%s\" for language %s was changed differently in the two editors. Enter the same value and save again",
+  "Результаты поиска по всему справочнику": "Search results across the whole catalog",
+  "Открыть в полном размере": "Open full size",
+  "Нет изображения": "No image"
 }
