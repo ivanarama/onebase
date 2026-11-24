@@ -478,24 +478,34 @@ func processorUploadSafeName(fileName string) string {
 		}
 	}
 	out := strings.TrimRight(strings.TrimSpace(string(name)), ". ")
-	ext := strings.ToLower(filepath.Ext(out))
+	ext := filepath.Ext(out)
+	stem := strings.TrimSuffix(out, ext)
 	if len(ext) > 16 {
 		ext = ""
 	}
-	stem := strings.TrimSuffix(out, filepath.Ext(out))
-	// Имя ограничено 120 байтами вместе с расширением: так путь остаётся
-	// короче предела Windows даже в глубоком временном каталоге.
-	for len(stem)+len(ext) > 120 && stem != "" {
-		r := []rune(stem)
-		stem = string(r[:len(r)-1])
+	// Ограничиваем имя вместе с расширением и не разрезаем символ UTF-8.
+	limit := 120 - len(ext)
+	if len(stem) > limit {
+		cut := limit
+		for !utf8.RuneStart(stem[cut]) {
+			cut--
+		}
+		stem = strings.TrimRight(stem[:cut], ". ")
 	}
 	if stem == "" || stem == "." || stem == ".." {
 		stem = "file"
 	}
-	switch strings.ToUpper(strings.TrimSpace(strings.SplitN(stem, ".", 2)[0])) {
-	case "CON", "PRN", "AUX", "NUL",
+	device, _, _ := strings.Cut(stem, ".")
+	switch strings.ToUpper(strings.TrimSpace(device)) {
+	case "CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$",
 		"COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
-		"LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9":
+		"COM¹", "COM²", "COM³",
+		"LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+		"LPT¹", "LPT²", "LPT³":
+		if len(stem) == limit {
+			_, size := utf8.DecodeLastRuneInString(stem)
+			stem = stem[:len(stem)-size]
+		}
 		stem = "_" + stem
 	}
 	return stem + ext

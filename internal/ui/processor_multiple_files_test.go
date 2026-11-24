@@ -17,6 +17,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/ivantit66/onebase/internal/dsl/ast"
@@ -86,6 +87,19 @@ func multipleFilesProcessor() *processor.Processor {
 	}
 }
 
+func TestProcessorUploadSafeNamePreservesBoundedUTF8(t *testing.T) {
+	for _, tc := range []struct{ file, want string }{
+		{strings.Repeat("я", 200) + ".PDF", strings.Repeat("я", 58) + ".PDF"},
+		{"CONIN$.jpg", "_CONIN$.jpg"},
+		{"CON" + strings.Repeat(" ", 120) + "X.PDF", "_CON.PDF"},
+		{"LPT².scan.PDF", "_LPT².scan.PDF"},
+	} {
+		if got := processorUploadSafeName(tc.file); got != tc.want || len(got) > 120 || !utf8.ValidString(got) {
+			t.Errorf("file length %d: got %q, want %q", len(tc.file), got, tc.want)
+		}
+	}
+}
+
 func TestProcessorMultipleFiles_RunGivesArrayAndOriginalNames(t *testing.T) {
 	s, _ := newSubmitTestServer(t, nil)
 	proc := multipleFilesProcessor()
@@ -99,7 +113,7 @@ func TestProcessorMultipleFiles_RunGivesArrayAndOriginalNames(t *testing.T) {
 	body, contentType := multipartBody(t, nil, []uploadPart{
 		{field: "Сканы", name: "Заявка 123.jpg", mime: "image/jpeg", data: []byte("jpeg-bytes")},
 		{field: "Сканы", name: "Заявка 456.pdf", mime: "application/pdf", data: []byte("%PDF-1.4 x")},
-		{field: "Акт", name: `C:\fakepath\Акт приёма: 7.png`, mime: "image/png", data: []byte("png")},
+		{field: "Акт", name: `C:\fakepath\Акт приёма: 7.PNG`, mime: "image/png", data: []byte("png")},
 	})
 	req, err := http.NewRequest(http.MethodPost, ts.URL+"/ui/processor/"+url.PathEscape(proc.Name), body)
 	if err != nil {
@@ -119,7 +133,7 @@ func TestProcessorMultipleFiles_RunGivesArrayAndOriginalNames(t *testing.T) {
 		"скан: Заявка 456.pdf|10|application/pdf|Заявка 456.pdf",
 		// Одиночный binary: путь к копии под исходным именем; недопустимый в
 		// имени файла символ заменён, каталог браузера отброшен.
-		"акт: Акт приёма_ 7.png",
+		"акт: Акт приёма_ 7.PNG",
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("нет %q в ответе (status %d):\n%.2000s", want, resp.StatusCode, html)
