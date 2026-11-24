@@ -109,8 +109,8 @@ type dslEmail struct {
 	sender   EmailSender
 	guard    NetGuard
 	resolver EmailFileResolver
-	to       string
-	cc       string
+	to       any // string or *Array; keep recipient arrays available to DSL getters
+	cc       any
 	subject  string
 	text     string
 	html     string
@@ -146,9 +146,17 @@ func (e *dslEmail) Set(field string, val any) {
 	s := fmt.Sprintf("%v", val)
 	switch field {
 	case "кому", "to":
+		if _, ok := val.(*Array); ok {
+			e.to = val
+			return
+		}
 		emailLengthOrRaise("ПисьмоEmail.Кому", s, MaxEmailRecipientBytes)
 		e.to = s
 	case "копия", "cc":
+		if _, ok := val.(*Array); ok {
+			e.cc = val
+			return
+		}
 		emailLengthOrRaise("ПисьмоEmail.Копия", s, MaxEmailRecipientBytes)
 		e.cc = s
 	case "тема", "subject":
@@ -319,7 +327,7 @@ func NewEmailFunctionsWithContext(sender EmailSender, guard NetGuard, ctxSource 
 	// а отсутствие и того и другого — ошибка Отправить.
 	emailFactory := func(args []any) any {
 		checkNet(guard)
-		return &dslEmail{sender: sender, guard: guard, resolver: resolver}
+		return &dslEmail{sender: sender, guard: guard, resolver: resolver, to: "", cc: ""}
 	}
 
 	receive := newReceiveMailBuiltin(guard, ctxSource)

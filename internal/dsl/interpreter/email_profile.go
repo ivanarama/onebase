@@ -135,7 +135,42 @@ func splitEmailRecipients(v any) ([]string, error) {
 			}
 		}
 	default:
-		raw = strings.FieldsFunc(fmt.Sprint(x), func(r rune) bool { return r == ',' || r == ';' })
+		// Split only mailbox separators, preserving quoted display names and
+		// comments verbatim. ParseAddress below still validates each mailbox.
+		value := fmt.Sprint(x)
+		start, commentDepth := 0, 0
+		quoted, escaped := false, false
+		for i, r := range value {
+			if escaped {
+				escaped = false
+				continue
+			}
+			if r == '\\' && (quoted || commentDepth > 0) {
+				escaped = true
+				continue
+			}
+			if r == '"' && commentDepth == 0 {
+				quoted = !quoted
+				continue
+			}
+			if quoted {
+				continue
+			}
+			switch r {
+			case '(':
+				commentDepth++
+			case ')':
+				if commentDepth > 0 {
+					commentDepth--
+				}
+			case ',', ';':
+				if commentDepth == 0 {
+					raw = append(raw, value[start:i])
+					start = i + 1
+				}
+			}
+		}
+		raw = append(raw, value[start:])
 	}
 	var out []string
 	for _, r := range raw {

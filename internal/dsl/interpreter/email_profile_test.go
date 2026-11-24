@@ -2,6 +2,7 @@ package interpreter_test
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -9,6 +10,84 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestEmailRecipientMailboxSeparators(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		list string
+		want []string
+	}{
+		{"quoted comma", `"Doe, John" <john@example.test>`, []string{`"Doe, John" <john@example.test>`}},
+		{"quoted semicolon and escaped quote", `"Doe; \"John\"" <john@example.test>; other@example.test`, []string{`"Doe; \"John\"" <john@example.test>`, "other@example.test"}},
+		{"comment separators", `john@example.test (Doe, John; team), other@example.test`, []string{`john@example.test (Doe, John; team)`, "other@example.test"}},
+		{"mixed separators", `one@example.test, two@example.test; three@example.test`, []string{"one@example.test", "two@example.test", "three@example.test"}},
+	} {
+		for _, entry := range []string{"shorthand", "object to", "object cc"} {
+			t.Run(tc.name+"/"+entry, func(t *testing.T) {
+				s := &profileSender{}
+				literal := `"` + strings.ReplaceAll(tc.list, `"`, `""`) + `"`
+				var body string
+				switch entry {
+				case "shorthand":
+					body = `ОтправитьПисьмо(` + literal + `, "test", "body");`
+				case "object to":
+					body = `П = Новый ПисьмоEmail; П.Кому = ` + literal + `; П.Тема = "test"; П.Отправить();`
+				case "object cc":
+					body = `П = Новый ПисьмоEmail; П.Кому = "to@example.test"; П.Копия = ` + literal + `; П.Тема = "test"; П.Отправить();`
+				}
+				err := runHTTPSrcErr(t, "Процедура Тест()\n"+body+"\nКонецПроцедуры", interpreter.NewEmailFunctions(s, nil))
+				require.NoError(t, err)
+				require.Equal(t, 1, s.sent)
+				if entry == "object cc" {
+					assert.Equal(t, tc.want, s.msg.Cc)
+					assert.Equal(t, []string{"to@example.test"}, s.msg.To)
+				} else {
+					assert.Equal(t, tc.want, s.msg.To)
+				}
+			})
+		}
+	}
+}
+
+func TestEmailObjectRecipientArrays(t *testing.T) {
+	for _, field := range []string{"Кому", "Копия"} {
+		t.Run(field, func(t *testing.T) {
+			s := &profileSender{}
+			src := fmt.Sprintf(`Процедура Тест()
+  Адресаты = Новый Массив;
+  Адресаты.Добавить("one@example.test");
+  Адресаты.Добавить("""Doe, John"" <john@example.test>");
+  П = Новый ПисьмоEmail;
+  П.Кому = "to@example.test";
+  П.%s = Адресаты;
+  Если П.%s.Количество() <> 2 Тогда ВызватьИсключение "Массив потерян"; КонецЕсли;
+  П.Тема = "test";
+  П.Отправить();
+КонецПроцедуры`, field, field)
+			require.NoError(t, runHTTPSrcErr(t, src, interpreter.NewEmailFunctions(s, nil)))
+			require.Equal(t, 1, s.sent)
+			want := []string{"one@example.test", `"Doe, John" <john@example.test>`}
+			if field == "Кому" {
+				assert.Equal(t, want, s.msg.To)
+			} else {
+				assert.Equal(t, want, s.msg.Cc)
+				assert.Equal(t, []string{"to@example.test"}, s.msg.To)
+			}
+		})
+	}
+}
+
+func TestEmailRecipientMalformedMailboxRejected(t *testing.T) {
+	for _, value := range []string{`"unclosed <john@example.test>`, `john@example.test (unclosed, other@example.test`, `one@example.test; invalid`} {
+		t.Run(value, func(t *testing.T) {
+			s := &profileSender{}
+			literal := `"` + strings.ReplaceAll(value, `"`, `""`) + `"`
+			src := "Процедура Тест()\nОтправитьПисьмо(" + literal + `, "test", "body");` + "\nКонецПроцедуры"
+			require.Error(t, runHTTPSrcErr(t, src, interpreter.NewEmailFunctions(s, nil)))
+			assert.Zero(t, s.sent)
+		})
+	}
+}
 
 // profileSender — отправитель с поддержкой профиля: запоминает, что пришло.
 type profileSender struct {
