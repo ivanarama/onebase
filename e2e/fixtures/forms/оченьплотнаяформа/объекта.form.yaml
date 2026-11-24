@@ -1,0 +1,48 @@
+schema: onebase.form/v1
+form:
+  name: ФормаОбъекта
+  kind: object
+  entity: ОченьПлотнаяФорма
+  density: dense
+attributes:
+  - name: Объект
+    type: DocumentRef.ОченьПлотнаяФорма
+    save: true
+    main: true
+elements:
+  - kind: ГруппаФормы
+    name: Group
+    title: {ru: Группа}
+    children:
+      - kind: ГруппаФормы
+        name: Nested
+        title: {ru: Вложенная группа}
+        children:
+          - kind: ПолеВвода
+            name: NestedText
+            data_path: Объект.Текст
+  - kind: ГруппаФормы
+    name: Row
+    title: {ru: Строка}
+    orientation: horizontal
+    children:
+      - kind: ПолеВвода
+        name: RowText
+        data_path: Объект.Текст
+      - kind: ПолеВвода
+        name: RowRef
+        data_path: Объект.Контрагент
+      - kind: Кнопка
+        name: RowButton
+        title: {ru: Действие}
+      - kind: Флажок
+        name: RowFlag
+        data_path: Объект.Признак
+        title: {ru: Признак}
+  - kind: Страница
+    name: Page
+    title: {ru: Отдельная страница}
+    children:
+      - kind: ПолеВвода
+        name: PageText
+        data_path: Объект.Текст
