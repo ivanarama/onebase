@@ -2901,14 +2901,22 @@ function obManagedInitDelegates() {
     p.list.querySelectorAll('.ob-free-choice-opt.active').forEach(function (o) { o.classList.remove('active'); });
   }
   function obFreeChoiceOpen(p, filter) {
-    if (!p.input || p.input.readOnly || p.input.disabled) return;
+    if (!p.input || p.input.readOnly || p.input.disabled) {
+      obFreeChoiceClose(p);
+      return;
+    }
     var q = (filter || '').toLowerCase();
     p.list.querySelectorAll('.ob-free-choice-opt').forEach(function (o) {
       o.hidden = !!q && o.textContent.toLowerCase().indexOf(q) < 0 && (o.getAttribute('data-value') || '').toLowerCase().indexOf(q) < 0;
+      if (o.hidden) o.classList.remove('active');
     });
     p.list.hidden = obFreeChoiceOpts(p).length === 0;
   }
   function obFreeChoicePick(p, opt) {
+    if (!p.input || p.input.readOnly || p.input.disabled || opt.hidden) {
+      obFreeChoiceClose(p);
+      return;
+    }
     var v = opt.getAttribute('data-value') || '';
     obFreeChoiceClose(p);
     p.input.focus();

@@ -29,6 +29,16 @@ test('choice free input: pick, keyboard and own text', async ({ page }) => {
   await expect(input).toHaveValue('ЗМ в течение часа');
   await expect(mark).toHaveValue('изменено: ЗМ в течение часа');
 
+  await input.press('ArrowDown');
+  await input.press('ArrowDown');
+  await expect(list.locator('.active')).toBeVisible();
+  await input.fill('14-2');
+  await expect(list.getByText('14-20', { exact: true })).toBeVisible();
+  await expect(list.locator('.active')).toHaveCount(0);
+  await input.press('Enter');
+  await expect(list).toBeHidden();
+  await expect(input).toHaveValue('14-2');
+
   await page.keyboard.press('ArrowDown');
   await expect(list).toBeVisible();
   await page.keyboard.press('Escape');
