@@ -91,11 +91,13 @@ func (s *Server) renderEntityForm(w http.ResponseWriter, r *http.Request, kind s
 	}
 	managed := pickManagedForm(entity, kind)
 	if managed != nil {
-		// ПриСозданииНаСервере — до всего, что читает значения: варианты
-		// ссылок, условия и разметка видят заполненные им реквизиты формы.
-		if err := s.runFormCreateHook(r.Context(), entity, managed, data); err != nil {
-			s.renderReadHookDenied(w, r, err)
-			return
+		// Инициализация идёт при открытии до вычисления условий и вариантов
+		// ссылок. Повторная отрисовка после ошибки сохраняет введённые значения.
+		if r.Method == http.MethodGet {
+			if err := s.runFormCreateHook(r.Context(), entity, managed, data); err != nil {
+				s.renderReadHookDenied(w, r, err)
+				return
+			}
 		}
 		data["Form"] = managed
 		s.issueConcealInstance(w, r, entity, managed, data)

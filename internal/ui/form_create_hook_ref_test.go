@@ -18,7 +18,10 @@ import (
 func TestFormCreateHook_ObjectRefOfOpenedRecord(t *testing.T) {
 	ent := &metadata.Entity{
 		Name: "ЗвонокСсылка", Kind: metadata.KindCatalog,
-		Fields: []metadata.Field{{Name: "Наименование", Type: metadata.FieldTypeString}},
+		Fields: []metadata.Field{
+			{Name: "Наименование", Type: metadata.FieldTypeString},
+			{Name: "Приоритет", Type: metadata.FieldTypeNumber},
+		},
 	}
 	ent.Forms = []*metadata.FormModule{{
 		Name: "ФормаОбъекта", Kind: "object", EntityName: ent.Name,
@@ -35,6 +38,8 @@ func TestFormCreateHook_ObjectRefOfOpenedRecord(t *testing.T) {
 Процедура ПриСоздании()
 	Если ЗначениеЗаполнено(Объект.Ссылка) Тогда
 		Объект.Метка = "ссылка:" + Объект.Ссылка.Наименование;
+	ИначеЕсли ЗначениеЗаполнено(Объект.Наименование) Тогда
+		Объект.Метка = "черновик:" + Объект.Наименование;
 	Иначе
 		Объект.Метка = "ссылка пуста";
 	КонецЕсли;
@@ -72,6 +77,21 @@ func TestFormCreateHook_ObjectRefOfOpenedRecord(t *testing.T) {
 	}
 	if body := newRec.Body.String(); !strings.Contains(body, `value="ссылка пуста"`) {
 		t.Fatalf("у нового объекта ссылка должна быть пуста: %s", formFieldSnippet(body, "ПолеМетка"))
+	}
+
+	copyRec := httptest.NewRecorder()
+	srv.form(copyRec, reqWithChi(http.MethodGet, "/ui/catalog/"+ent.Name+"/new?copy="+id.String(), nil,
+		map[string]string{"entity": ent.Name}))
+	if body := copyRec.Body.String(); copyRec.Code != http.StatusOK || !strings.Contains(body, `value="черновик:Звонок 42"`) {
+		t.Fatalf("ПриСозданииНаСервере копии: HTTP %d, %s", copyRec.Code, formFieldSnippet(body, "ПолеМетка"))
+	}
+
+	retry := httptest.NewRecorder()
+	srv.submit(retry, reqWithChi(http.MethodPost, "/ui/catalog/"+ent.Name+"/new",
+		url.Values{"Наименование": {"Черновик"}, "Метка": {"введено перед записью"}, "Приоритет": {"не число"}},
+		map[string]string{"entity": ent.Name}))
+	if body := retry.Body.String(); retry.Code != http.StatusBadRequest || !strings.Contains(body, `value="введено перед записью"`) {
+		t.Fatalf("после ошибки записи должен остаться введённый реквизит: HTTP %d, %s", retry.Code, formFieldSnippet(body, "ПолеМетка"))
 	}
 }
 

@@ -1,8 +1,8 @@
 package ui
 
 // Карточка, скрытая до ответа на вопрос (как в 1С ПередОткрытием/
-// ПриСозданииНаСервере): содержимое группы не показывается и не уезжает в
-// браузер, пока условие hidden_when истинно.
+// ПриСозданииНаСервере): содержимое группы не показывается
+// пользователю, пока условие hidden_when истинно.
 //
 //   - ПриСозданииНаСервере — серверный обработчик формы при GET, до отрисовки.
 //     Реквизиты формы, которые он заполнил, участвуют в hidden_when первой же
@@ -93,8 +93,17 @@ func (s *Server) runFormCreateHook(ctx context.Context, entity *metadata.Entity,
 		// объекта ссылка пуста (как в 1С до записи).
 		setPersistedFormSelfRef(entity, obj)
 	} else {
-		obj = &runtime.Object{ID: uuid.New(), Type: entity.Name, Kind: entity.Kind,
-			Fields: map[string]any{}, TablePartRows: map[string][]map[string]any{}}
+		obj = runtime.NewObject(entity.Name, entity.Kind)
+		// Новый объект уже заполнен значениями по умолчанию, с основания
+		// или из копии. Обработчик читает тот же черновик, что виден в форме.
+		for _, field := range entity.Fields {
+			if raw, present := values[field.Name]; present {
+				// Доступ из DSL приводит значение к типу реквизита.
+				obj.Set(field.Name, raw)
+			}
+		}
+		rows, _ := data["TablePartRows"].(map[string][]map[string]any)
+		obj.TablePartRows = cloneTablePartRowMap(rows)
 	}
 	for _, attr := range form.Attributes {
 		if formAttrIsScalar(attr) {
