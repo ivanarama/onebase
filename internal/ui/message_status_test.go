@@ -79,7 +79,7 @@ func TestFormEventMessageStatusReachesFormAndPanel(t *testing.T) {
 			t.Errorf("панель %d: %+v, ждали %q %q", i, panel.Messages[i], w.text, w.status)
 		}
 	}
-	if strings.ContainsAny(rec.Body.String(), "⁣⁤") {
+	if strings.ContainsAny(rec.Body.String(), "\u2063\u2064") {
 		t.Error("в JSON панели осталась служебная метка статуса")
 	}
 }
@@ -106,7 +106,7 @@ func TestManagedFormPageRendersImportantMessageAsError(t *testing.T) {
 	if !strings.Contains(page, `<div class="error msg-important">в 1С НЕ выгружена</div>`) {
 		t.Error("важное сообщение не показано блоком ошибки")
 	}
-	if strings.ContainsAny(page, "⁣⁤") {
+	if strings.ContainsAny(page, "\u2063\u2064") {
 		t.Error("на странице осталась служебная метка статуса")
 	}
 }

@@ -20,10 +20,10 @@ func TestEncodeSplitRoundTrip(t *testing.T) {
 		t.Errorf("перекодирование: %q %q", text, status)
 	}
 	// Строка, случайно начинающаяся с U+2063 без завершителя, — обычный текст.
-	if text, status := Split("⁣⁣x"); text != "⁣⁣x" || status != Ordinary {
+	if text, status := Split("\u2063\u2063x"); text != "\u2063\u2063x" || status != Ordinary {
 		t.Errorf("без завершителя: %q %q", text, status)
 	}
-	if text, status := Split("⁣⁣⁣⁣⁣⁤x"); status != Ordinary || text == "x" {
+	if text, status := Split("\u2063\u2063\u2063\u2063\u2063\u2064x"); status != Ordinary || text == "x" {
 		t.Errorf("номер вне диапазона принят: %q %q", text, status)
 	}
 }
