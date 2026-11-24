@@ -28,14 +28,16 @@ var windowCmd = &cobra.Command{
 		if title == "" {
 			title = "onebase"
 		}
-		// nil-канал: окно живёт до закрытия пользователем. Координатор закрытия
-		// тоже nil — это окно Предприятия, базами оно не распоряжается.
-		return launcher.OpenWindow(url, title, nil, nil)
+		// Окно живёт до закрытия пользователем и базами не распоряжается. По
+		// записи базы (--base) оно запускает её сопутствующие программы.
+		baseID, _ := cmd.Flags().GetString("base")
+		return launcher.OpenEnterpriseWindow(url, title, baseID)
 	},
 }
 
 func init() {
 	windowCmd.Flags().String("url", "", "адрес страницы")
 	windowCmd.Flags().String("title", "", "заголовок окна")
+	windowCmd.Flags().String("base", "", "id записи базы в лаунчере (сопутствующие программы)")
 	rootCmd.AddCommand(windowCmd)
 }

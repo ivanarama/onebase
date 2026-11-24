@@ -121,6 +121,34 @@ func newWindowSession(hwnd uintptr, uiThreadID uint32, cc CloseCoordinator) *win
 // the window is closed or done is closed (via /quit).
 // MUST be called from the main goroutine; webview requires the main OS thread.
 func OpenWindow(url, title string, done <-chan struct{}, cc CloseCoordinator) error {
+	return openWindow(url, title, done, cc, nil)
+}
+
+// OpenEnterpriseWindow — окно Предприятия базы baseID: страница получает
+// window.obLauncherCompanions(keys) — запуск сопутствующих программы записи
+// базы по ключам, которые сервер назвал пользователю после входа. Ответ —
+// сообщения об ошибках запуска для показа в окне.
+func OpenEnterpriseWindow(url, title, baseID string) error {
+	var setup func(webview.WebView)
+	if baseID != "" {
+		launcher := newCompanionLauncher(systemCompanionRuntime)
+		setup = func(w webview.WebView) {
+			err := w.Bind("obLauncherCompanions", func(keys []string) []string {
+				store, err := NewStore()
+				if err != nil {
+					return []string{"Сопутствующие программы не запущены: не открылся список баз лаунчера (" + err.Error() + ")."}
+				}
+				return startBaseCompanions(launcher, store, baseID, keys)
+			})
+			if err != nil {
+				respondLog().Warn("не удалось подключить запуск сопутствующих программ", "err", err)
+			}
+		}
+	}
+	return openWindow(url, title, nil, nil, setup)
+}
+
+func openWindow(url, title string, done <-chan struct{}, cc CloseCoordinator, setup func(webview.WebView)) error {
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
 
@@ -130,6 +158,9 @@ func OpenWindow(url, title string, done <-chan struct{}, cc CloseCoordinator) er
 	w.SetTitle(title)
 	w.SetSize(900, 600, webview.HintNone)
 	w.Init(`window.addEventListener('load', function(){ window.focus(); });`)
+	if setup != nil {
+		setup(w)
+	}
 	w.Navigate(url)
 
 	// The vendored Win32 backend creates and shows its HWND synchronously in

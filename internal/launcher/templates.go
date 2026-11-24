@@ -259,6 +259,20 @@ const tplIndex = `
   <tr><td style="color:#888;padding:2px 0">{{t $.Lang "Состояние"}}</td><td>{{if .Selected.Running}}<span style="color:#16a34a;font-weight:600">{{t $.Lang "Работает"}}</span>{{else}}<span style="color:#888">{{t $.Lang "Остановлена"}}</span>{{end}}</td></tr>
   {{if not .Selected.LastOpened.IsZero}}<tr><td style="color:#888;padding:2px 0">{{t $.Lang "Открыта"}}</td><td>{{.Selected.LastOpened.Format "02.01.2006"}}</td></tr>{{end}}
   </table>
+  {{if .Selected.CompanionStates}}
+  <div style="font-weight:600;margin-top:12px">{{t $.Lang "Сопутствующие программы"}}</div>
+  <ul style="margin:4px 0;padding-left:18px">
+  {{range .Selected.CompanionStates}}
+    <li data-companion-state="{{.Status}}">{{.Key}} —
+      {{if eq .Status "running"}}{{t $.Lang "работает"}}
+      {{else if eq .Status "exited"}}{{t $.Lang "завершилась"}}
+      {{else if eq .Status "failed"}}{{t $.Lang "ошибка запуска или работы"}}
+      {{else if eq .Status "unavailable"}}{{t $.Lang "файл программы не найден"}}
+      {{else}}{{t $.Lang "не поставлено с этим дистрибутивом"}}{{end}}
+    </li>
+  {{end}}
+  </ul>
+  {{end}}
   {{if .Selected.Running}}
   <div style="margin-top:12px">
     <a href="{{.BaseURL}}" target="_blank" style="font-size:12px;color:#1a5fa8">{{t $.Lang "Открыть в браузере"}} ↗</a>
@@ -1220,6 +1234,11 @@ const tplForm = `
       <label>{{t $.Lang "Адрес сервера"}}</label>
       <input name="server_url" value="{{.Base.ServerURL}}" placeholder="https://onebase.example.local:8443">
       <div class="hint">{{t $.Lang "Схема обязательна: http:// или https://. Без пути и параметров — только адрес и порт."}}</div>
+    </div>
+    <div class="fg">
+      <label>{{t $.Lang "Запускать вместе с базой"}}</label>
+      <textarea name="companions" rows="3" style="width:100%;font-family:monospace" placeholder="callista | C:\Callista\callista-operator.exe">{{.CompanionsText}}</textarea>
+      <div class="hint">{{t $.Lang "Необязательно. Обычно программы задаёт комплект — файл companions.yaml рядом с лаунчером; строка здесь с тем же ключом задаёт свой путь на этом компьютере. Формат: «ключ | путь к программе | аргументы | рабочий каталог» (аргументы и каталог — по желанию). Окно Предприятия запускает программу после входа, если база назвала её ключ пользователю; уже запущенная второй раз не запускается."}}</div>
     </div>
     <div class="fg local-only" style="{{if .ClientKind}}display:none{{end}}">
       <label>{{t $.Lang "Тип хранения конфигурации"}}</label>

@@ -15,12 +15,14 @@ func TestNativeIsolatedCommand(t *testing.T) {
 	if !nativeIsolatedSupported() {
 		t.Fatal("GUI-сборка под Windows обязана поддерживать нативные окна")
 	}
-	cmd, ok := nativeIsolatedCommand(`C:\profiles\p1`, "http://localhost:8080/ui")
+	cmd, ok := nativeIsolatedCommand(`C:\profiles\p1`, "http://localhost:8080/ui", "base-1")
 	if !ok {
 		t.Fatal("nativeIsolatedCommand должен вернуть команду")
 	}
 	joined := strings.Join(cmd.Args, " ")
-	for _, want := range []string{"window", "--url", "http://localhost:8080/ui"} {
+	// --base — запись базы, по которой окно запускает её сопутствующие
+	// программы (companions.go).
+	for _, want := range []string{"window", "--url", "http://localhost:8080/ui", "--base base-1"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("аргументы не содержат %q: %v", want, cmd.Args)
 		}
@@ -41,9 +43,13 @@ func TestNativeIsolatedCommand(t *testing.T) {
 
 func TestNativeSharedProfileDoesNotInheritIsolatedProfile(t *testing.T) {
 	t.Setenv("ONEBASE_WEBVIEW_PROFILE", `C:\profiles\inherited`)
-	cmd, ok := nativeIsolatedCommand("", "http://localhost:8080/ui")
+	cmd, ok := nativeIsolatedCommand("", "http://localhost:8080/ui", "")
 	if !ok {
 		t.Fatal("nativeIsolatedCommand должен вернуть команду")
+	}
+	// Без записи базы окно не получает --base: запускать нечего.
+	if strings.Contains(strings.Join(cmd.Args, " "), "--base") {
+		t.Errorf("--base без записи базы: %v", cmd.Args)
 	}
 	for _, e := range cmd.Env {
 		if strings.HasPrefix(strings.ToUpper(e), "ONEBASE_WEBVIEW_PROFILE=") {
