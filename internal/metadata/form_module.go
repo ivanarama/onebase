@@ -234,6 +234,13 @@ type FormElement struct {
 	// было.
 	ScrollX    bool   `yaml:"scroll_x,omitempty"`
 	Background string `yaml:"background,omitempty"` // фон: ГруппаФормы (#1547), СтраницыФормы (весь набор с полосой закладок), Кнопка; цвет проверяет csssafe.Color
+	// TextColor — цвет текста поля ввода или надписи (подпись и значение,
+	// у нередактируемого поля тоже); цвет проверяет csssafe.Color, как у
+	// background. Importance — смысловое выделение вместо конкретного цвета:
+	// error — красный текст ошибки (например, «Не отправлена в 1С»). Если
+	// заданы оба, text_color сильнее. См. FormElementTextColorCSS.
+	TextColor  string `yaml:"text_color,omitempty"`
+	Importance string `yaml:"importance,omitempty"`
 	// HeaderBackground / HeaderBorderColor — фон и цвет границы шапки таблицы
 	// ТабличнаяЧасть: на цветном фоне формы шапка иначе сливается со строками.
 	// Цвета проверяет csssafe.Color.

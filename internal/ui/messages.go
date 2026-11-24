@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/ivantit66/onebase/internal/auth"
+	"github.com/ivantit66/onebase/internal/msgstatus"
 )
 
 const (
@@ -20,6 +21,9 @@ type Message struct {
 	Kind string    `json:"kind"`
 	Text string    `json:"text"`
 	Time time.Time `json:"time"`
+	// Status — СтатусСообщения из второго аргумента Сообщить (msgstatus);
+	// пусто — обычное сообщение. Панель показывает Важное/ОченьВажное красным.
+	Status string `json:"status,omitempty"`
 }
 
 type MessageStore struct {
@@ -43,13 +47,14 @@ func (s *MessageStore) push(userKey, text, kind string) Message {
 	if userKey == "" {
 		userKey = "_anonymous"
 	}
+	text, status := msgstatus.Split(text)
 	if len(text) > messageMaxLen {
 		text = text[:messageMaxLen] + "…"
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	list := s.m[userKey]
-	msg := Message{ID: uuid.NewString(), Text: text, Time: time.Now(), Kind: kind}
+	msg := Message{ID: uuid.NewString(), Text: text, Time: time.Now(), Kind: kind, Status: status}
 	list = append(list, msg)
 	if len(list) > messagesPerUserLimit {
 		list = list[len(list)-messagesPerUserLimit:]

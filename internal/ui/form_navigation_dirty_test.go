@@ -120,7 +120,11 @@ const moveEnd = source.indexOf('  function rememberActiveGrid', moveStart);
 if ([dirtyEnd, markStart, markEnd, gridHelpersStart, gridHelpersEnd, moveStart, moveEnd, closeIDStart, closeIDEnd].some(i => i < 0)) {
   throw new Error('managed.js dirty/grid behavior slices not found');
 }
-const fnSource = source.slice(closeIDStart, closeIDEnd) + source.slice(helpersEnd, dirtyEnd) + source.slice(markStart, markEnd) +
+// Тост сообщений модуля (obFlashMessage) живёт в том же IIFE, что obFire.
+const msgStart = source.indexOf('  // BEGIN onebase-message-status');
+const msgEnd = source.indexOf('  // END onebase-message-status', msgStart);
+if (msgStart < 0 || msgEnd < 0) throw new Error('managed.js message-status slice not found');
+const fnSource = source.slice(msgStart, msgEnd) + source.slice(closeIDStart, closeIDEnd) + source.slice(helpersEnd, dirtyEnd) + source.slice(markStart, markEnd) +
   source.slice(gridHelpersStart, gridHelpersEnd) + source.slice(moveStart, moveEnd) +
   source.slice(helpersStart, helpersEnd) + source.slice(mergeStart, mergeEnd) +
   source.slice(start, fireEnd);

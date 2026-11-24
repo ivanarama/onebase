@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/ivantit66/onebase/internal/entityservice"
 	"github.com/ivantit66/onebase/internal/metadata"
+	"github.com/ivantit66/onebase/internal/msgstatus"
 	"github.com/ivantit66/onebase/internal/query"
 	reportpkg "github.com/ivantit66/onebase/internal/report"
 	"github.com/ivantit66/onebase/internal/report/compose"
@@ -378,7 +379,7 @@ func (h *handler) unpostDocumentV2() http.HandlerFunc {
 		writeJSONV2(w, http.StatusOK, restV2Envelope{Data: map[string]any{
 			"id":       id.String(),
 			"posted":   false,
-			"messages": result.DSLMessages,
+			"messages": msgstatus.StripAll(result.DSLMessages),
 		}})
 	}
 }
@@ -591,7 +592,7 @@ func writeSaveResultV2(w http.ResponseWriter, result entityservice.SaveResult, e
 	}
 	data := map[string]any{
 		"id":       id.String(),
-		"messages": result.DSLMessages,
+		"messages": msgstatus.StripAll(result.DSLMessages),
 	}
 	if posted {
 		data["posted"] = true
