@@ -91,6 +91,14 @@ func (s *Server) renderEntityForm(w http.ResponseWriter, r *http.Request, kind s
 	}
 	managed := pickManagedForm(entity, kind)
 	if managed != nil {
+		// Инициализация идёт при открытии до вычисления условий и вариантов
+		// ссылок. Повторная отрисовка после ошибки сохраняет введённые значения.
+		if r.Method == http.MethodGet {
+			if err := s.runFormCreateHook(r.Context(), entity, managed, data); err != nil {
+				s.renderReadHookDenied(w, r, err)
+				return
+			}
+		}
 		data["Form"] = managed
 		s.issueConcealInstance(w, r, entity, managed, data)
 		// Фикс A: команды формы, не размещённые вручную элементом kind: Кнопка,
@@ -178,6 +186,16 @@ func (s *Server) prepareManagedFormData(ctx context.Context, data map[string]any
 	}
 	entity, _ := data["Entity"].(*metadata.Entity)
 	header := managedFormHeaderValues(entity, data["Values"])
+	// Реквизиты формы — тоже по своему типу, как в ответе события: иначе
+	// булев реквизит в hidden_when первой отрисовки был бы строкой «true».
+	for _, attr := range form.Attributes {
+		if !formAttrIsScalar(attr) {
+			continue
+		}
+		if raw, ok := header[attr.Name].(string); ok {
+			header[attr.Name] = typeFormAttrValue(attr.TypeRef, raw)
+		}
+	}
 
 	// Якори размещений нужны и без интерпретатора: editable_admin_only
 	// вычисляется независимо от DSL и возвращается после события формы.

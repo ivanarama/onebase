@@ -11,21 +11,25 @@ import (
 type FormEventType string
 
 const (
-	FormEventOnOpen         FormEventType = "ПриОткрытии"        // OnOpen (client-side, after render)
-	FormEventOnReadAtServer FormEventType = "ПриЧтенииНаСервере" // OnReadAtServer (server-side, before render → может запретить чтение)
-	FormEventBeforeWrite    FormEventType = "ПередЗаписью"       // BeforeWrite
-	FormEventOnWrite        FormEventType = "ПриЗаписи"          // OnWrite
-	FormEventAfterWrite     FormEventType = "ПослеЗаписи"        // AfterWrite
-	FormEventBeforeClose    FormEventType = "ПередЗакрытием"     // BeforeClose
-	FormEventOnClose        FormEventType = "ПриЗакрытии"        // OnClose
-	FormEventOnActivate     FormEventType = "ПриАктивации"       // OnActivate
-	FormEventItemChoice     FormEventType = "ОбработкаВыбора"    // ItemChoice
-	FormEventStartChoice    FormEventType = "НачалоВыбора"       // StartChoice
-	FormEventOnChange       FormEventType = "ПриИзменении"       // OnChange
-	FormEventOnCreate       FormEventType = "ПриСоздании"        // OnCreate
-	FormEventBeforeDelete   FormEventType = "ПередУдалением"     // BeforeDelete
-	FormEventOnDelete       FormEventType = "ПриУдалении"        // OnDelete
-	FormEventAfterDelete    FormEventType = "ПослеУдаления"      // AfterDelete
+	FormEventOnOpen FormEventType = "ПриОткрытии" // OnOpen (client-side, after render)
+	// FormEventOnCreateAtServer — ПриСозданииНаСервере: серверный обработчик
+	// формы при GET, до отрисовки; реквизиты формы, заполненные им, участвуют в
+	// hidden_when/readonly_when первой отрисовки (form_hidden_until.go).
+	FormEventOnCreateAtServer FormEventType = "ПриСозданииНаСервере"
+	FormEventOnReadAtServer   FormEventType = "ПриЧтенииНаСервере" // OnReadAtServer (server-side, before render → может запретить чтение)
+	FormEventBeforeWrite      FormEventType = "ПередЗаписью"       // BeforeWrite
+	FormEventOnWrite          FormEventType = "ПриЗаписи"          // OnWrite
+	FormEventAfterWrite       FormEventType = "ПослеЗаписи"        // AfterWrite
+	FormEventBeforeClose      FormEventType = "ПередЗакрытием"     // BeforeClose
+	FormEventOnClose          FormEventType = "ПриЗакрытии"        // OnClose
+	FormEventOnActivate       FormEventType = "ПриАктивации"       // OnActivate
+	FormEventItemChoice       FormEventType = "ОбработкаВыбора"    // ItemChoice
+	FormEventStartChoice      FormEventType = "НачалоВыбора"       // StartChoice
+	FormEventOnChange         FormEventType = "ПриИзменении"       // OnChange
+	FormEventOnCreate         FormEventType = "ПриСоздании"        // OnCreate
+	FormEventBeforeDelete     FormEventType = "ПередУдалением"     // BeforeDelete
+	FormEventOnDelete         FormEventType = "ПриУдалении"        // OnDelete
+	FormEventAfterDelete      FormEventType = "ПослеУдаления"      // AfterDelete
 	// События для табличных частей (замечание #15): даём YAML-конфигу
 	// возможность их объявлять. UI дёргает их generic-маршрутом через
 	// handleManagedFormEvent (resolveHandlerProc + interp.Run) — кастомные
@@ -76,7 +80,7 @@ const (
 )
 
 var knownFormEventTypes = map[FormEventType]bool{
-	FormEventOnOpen: true, FormEventOnReadAtServer: true,
+	FormEventOnOpen: true, FormEventOnReadAtServer: true, FormEventOnCreateAtServer: true,
 	FormEventBeforeWrite: true, FormEventOnWrite: true, FormEventAfterWrite: true,
 	FormEventBeforeClose: true, FormEventOnClose: true, FormEventOnActivate: true,
 	FormEventItemChoice: true, FormEventStartChoice: true, FormEventOnChange: true,

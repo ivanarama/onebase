@@ -40,7 +40,7 @@ function setup(initial, withEditor, missingEditor, renderedAttrs) {
   const field = input.getAttribute('data-ob-picture-field');
   input.type = 'hidden';
   input.tagName = 'INPUT';
-  const editor = withEditor ? node({ type: 'text', name: 'ФотоПревью', value: initial }) : null;
+  const editor = withEditor ? node({ type: 'text', name: field, value: initial }) : null;
   if (editor) { editor.type = 'text'; editor.tagName = 'INPUT'; }
   // Resolve name at query time: a preview can become the submitting carrier
   // when the GET omitted its editor inside a hidden container.
@@ -107,13 +107,16 @@ test('реквизит с полем ввода: превью берёт зна�
 
 // The Go regression supplies attributes parsed from the public GET form.
 if (process.argv.includes('--rendered-picture')) {
-  const attrs = JSON.parse(fs.readFileSync(0, 'utf8'));
-  test('GET формы: превью без редактора в DOM обновляется ответом события', () => {
-    const t = setup(attrs.value, false, true, attrs);
+  const { picture: attrs, hasDisabledEditor } = JSON.parse(fs.readFileSync(0, 'utf8'));
+  test('GET формы: ответ события обновляет превью при скрытом редакторе', () => {
+    const t = setup(attrs.value, hasDisabledEditor, !hasDisabledEditor, attrs);
+    if (t.editor) t.editor.closest = (sel) => sel === 'fieldset[disabled]' ? {} : null;
     const field = attrs['data-ob-picture-field'];
     const id = '9a1b2c3d-4e5f-4a6b-8c7d-0e1f2a3b4c5d';
     t.ctx.applyValues({ [field]: id });
     assert.equal(t.input.value, id);
+    assert.equal(t.input.getAttribute('name'), field);
+    if (t.editor) assert.equal(t.editor.value, id);
     assert.equal(t.img.getAttribute('src'), '/ui/attachments/' + id + '/download');
     assert.equal(t.link.getAttribute('href'), '/ui/attachments/' + id + '/download');
     assert.equal(t.link.hidden, false);

@@ -82,7 +82,7 @@ func CheckFormEventDispatch(proj *project.Project) []Issue {
 // вовсе, и выдумывать её вредно — конфигуратор потратит день на «эквивалент»,
 // которого не существует.
 func uncalledEventFix(event metadata.FormEventType) string {
-	const server = "Серверные события формы — ПриЧтенииНаСервере, ПередЗаписью, ПриЗаписи, ПослеЗаписи;" +
+	const server = "Серверные события формы — ПриСозданииНаСервере, ПриЧтенииНаСервере, ПередЗаписью, ПриЗаписи, ПослеЗаписи;" +
 		" браузерные перечислены в AGENTS.md, раздел «События управляемых форм»."
 	switch event {
 	case metadata.FormEventOnCreate:

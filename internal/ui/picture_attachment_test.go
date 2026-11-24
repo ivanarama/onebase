@@ -93,7 +93,8 @@ func TestManagedFormPictureFieldShowsAttachment(t *testing.T) {
 }
 
 // pictureFormControls — то, что отправит браузер: именованные контролы формы
-// записи (#main-form) в порядке разметки, без disabled и неотмеченных флажков.
+// записи (#main-form) в порядке разметки, без отключённых элементов и
+// групп, а также без неотмеченных флажков.
 func pictureFormControls(t *testing.T, rendered string) url.Values {
 	t.Helper()
 	doc, err := html.Parse(strings.NewReader(rendered))
@@ -123,6 +124,12 @@ func pictureFormControls(t *testing.T, rendered string) url.Values {
 	values := url.Values{}
 	var walk func(*html.Node)
 	walk = func(n *html.Node) {
+		if n.Type == html.ElementNode && n.Data == "fieldset" {
+			if _, disabled := managedHTMLAttr(n, "disabled"); disabled {
+				// В рендере OneBase legend содержит только подпись группы.
+				return
+			}
+		}
 		if n.Type == html.ElementNode && (n.Data == "input" || n.Data == "textarea" || n.Data == "select") {
 			name, _ := managedHTMLAttr(n, "name")
 			_, disabled := managedHTMLAttr(n, "disabled")
@@ -239,17 +246,33 @@ func TestManagedFormPictureFieldEnglishLabels(t *testing.T) {
 	}
 }
 
-// Exercise the actual GET markup in the browser applyValues path: metadata
-// contains an editor, but its hidden group is absent from the rendered form.
+// Exercise the actual GET markup in the browser applyValues path. A
+// permanently hidden editor is omitted. An editor in a conditionally hidden
+// group is rendered inside a disabled fieldset so an event can show it.
 func TestManagedFormPictureWithHiddenEditorUpdatesInNode(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
 		t.Skip("node is required for the managed picture binding behavior test")
 	}
+	for _, tc := range []struct {
+		name, condition string
+		conditional     bool
+	}{
+		{name: "permanently hidden", condition: "Истина"},
+		{name: "conditionally hidden", condition: `Наименование <> ""`, conditional: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			checkManagedPictureWithHiddenEditor(t, node, tc.condition, tc.conditional)
+		})
+	}
+}
+
+func checkManagedPictureWithHiddenEditor(t *testing.T, node, condition string, conditional bool) {
+	t.Helper()
 	oldID := uuid.New().String()
 	srv, ent := setupManagedEventsServer(t, ``, nil, []*metadata.FormElement{
 		{Kind: metadata.FormElementPicture, Name: "ПолеФото", DataPath: "Объект.Наименование"},
-		{Kind: metadata.FormElementGroupBox, Name: "СкрытаяГруппа", HiddenWhen: `Наименование <> ""`, Children: []*metadata.FormElement{
+		{Kind: metadata.FormElementGroupBox, Name: "СкрытаяГруппа", HiddenWhen: condition, Children: []*metadata.FormElement{
 			{Kind: metadata.FormElementField, Name: "РедакторФото", DataPath: "Объект.Наименование"},
 		}},
 	})
@@ -264,15 +287,19 @@ func TestManagedFormPictureWithHiddenEditorUpdatesInNode(t *testing.T) {
 		t.Fatalf("GET формы: %d %s", rec.Code, rec.Body.String())
 	}
 	if values := pictureFormControls(t, rec.Body.String()); len(values["Наименование"]) != 0 {
-		t.Fatalf("hidden group unexpectedly rendered a named control: %v", values["Наименование"])
+		t.Fatalf("hidden group would submit its editor: %v", values["Наименование"])
 	}
 	doc, err := html.Parse(strings.NewReader(rec.Body.String()))
 	if err != nil {
 		t.Fatal(err)
 	}
 	var attrs map[string]string
+	hasEditor := false
 	var walk func(*html.Node)
 	walk = func(n *html.Node) {
+		if name, _ := managedHTMLAttr(n, "name"); n.Data == "input" && name == "Наименование" {
+			hasEditor = true
+		}
 		if name, _ := managedHTMLAttr(n, "data-ob-picture-for"); name == "ПолеФото" {
 			attrs = make(map[string]string)
 			for _, a := range n.Attr {
@@ -287,7 +314,13 @@ func TestManagedFormPictureWithHiddenEditorUpdatesInNode(t *testing.T) {
 	if attrs == nil || attrs["value"] != oldID || attrs["name"] != "" {
 		t.Fatalf("unexpected picture state: %v", attrs)
 	}
-	fixture, err := json.Marshal(attrs)
+	if hasEditor != conditional {
+		t.Fatalf("editor present in markup = %v, want %v", hasEditor, conditional)
+	}
+	fixture, err := json.Marshal(struct {
+		Picture           map[string]string `json:"picture"`
+		HasDisabledEditor bool              `json:"hasDisabledEditor"`
+	}{Picture: attrs, HasDisabledEditor: hasEditor})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -84,6 +84,12 @@ func TestServerFormEvents_ЗапускаютсяСервером(t *testing.T) {
 				if rec := executeFormEditGET(t, srv, ent, id); rec.Code != http.StatusForbidden {
 					t.Fatalf("ПриЧтенииНаСервере не исполнился: код ответа %d вместо 403", rec.Code)
 				}
+			case metadata.FormEventOnCreateAtServer:
+				// Ошибка обработчика до отрисовки — отказ без формы (fail-closed).
+				id := insertContragent(t, srv, ent, "КОНТРАГЕНТ")
+				if rec := executeFormEditGET(t, srv, ent, id); rec.Code != http.StatusForbidden {
+					t.Fatalf("ПриСозданииНаСервере не исполнился: код ответа %d вместо 403", rec.Code)
+				}
 			case metadata.FormEventBeforeWrite, metadata.FormEventOnWrite:
 				obj := &runtime.Object{
 					ID: uuid.New(), Type: ent.Name, Kind: ent.Kind,
