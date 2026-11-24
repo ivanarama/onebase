@@ -135,8 +135,24 @@ func TestInfoRegEditRevisionShadowedKeylessMatrix(t *testing.T) {
 			if exists, err := db.Dialect().ColumnExists(ctx, db, table, "updated_at"); err != nil || exists {
 				t.Fatalf("SQL failure retained DDL: %t %v", exists, err)
 			}
+			err := db.WithTxScope(ctx, func(txCtx context.Context) error {
+				if _, err := db.Exec(txCtx, "UPDATE "+table+" SET oid = 'provisional'"); err != nil {
+					return err
+				}
+				return db.InvalidateInfoRegEditRevisions(txCtx, ir)
+			})
+			if err == nil || !strings.Contains(err.Error(), "injected revision update failure") {
+				t.Fatalf("SQL fault during invalidation not exercised: %v", err)
+			}
+			if got := shadowedKeylessSnapshot(t, db, table, true); !reflect.DeepEqual(got, before) {
+				t.Fatal("failed invalidation left partial versions or business writes")
+			}
 		})
-		// Inject failure only during the public operation. No parallel subtests:
+		// SQLite's SQL scalar reads Go entropy. PostgreSQL uses a built-in SQL
+		// generator, so its failure path is covered by the SQL fault above.
+		if !db.IsSQLite() {
+			return
+		}
 		// uuid.SetRand is process-global and always restored before leaving scope.
 		for _, cancelDuringUUID := range []bool{false, true} {
 			t.Run(fmt.Sprintf("RandomFailureCancel%t", cancelDuringUUID), func(t *testing.T) {
