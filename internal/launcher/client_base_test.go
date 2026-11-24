@@ -147,7 +147,7 @@ func TestStopAllSkipsClientBases(t *testing.T) {
 	}
 }
 
-func TestClientServerReachable(t *testing.T) {
+func TestClientServerHealth(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/health" {
 			w.WriteHeader(http.StatusNotFound)
@@ -161,17 +161,17 @@ func TestClientServerReachable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !clientServerReachable(context.Background(), base, srv.Client()) {
+	if issue := probeClientServer(context.Background(), base, srv.Client()); issue != "" {
 		t.Error("работающий сервер должен считаться доступным")
 	}
 
 	srv.Close()
-	if clientServerReachable(context.Background(), base, srv.Client()) {
+	if issue := probeClientServer(context.Background(), base, srv.Client()); issue != probeNetwork {
 		t.Error("остановленный сервер не должен считаться доступным")
 	}
 
 	// Обычная база через эту проверку не ходит вовсе.
-	if clientServerReachable(context.Background(), &Base{Name: "Локальная", Port: 8080}, nil) {
+	if issue := probeClientServer(context.Background(), &Base{Name: "Локальная", Port: 8080}, nil); issue != probeBadAddress {
 		t.Error("для не-клиентской записи проверка доступности неприменима")
 	}
 }

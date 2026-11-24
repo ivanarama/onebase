@@ -260,6 +260,7 @@ func (s *Server) ListenAndServe() error {
 	r.Get("/bases/new", s.h.newForm)
 	r.Post("/bases", s.h.create)
 	r.Get("/bases/{id}/edit", s.h.editForm)
+	r.Get("/bases/{id}/client-status", s.h.clientProbeStatus)
 	r.Post("/bases/{id}", s.h.update)
 	r.Post("/bases/{id}/delete", s.h.delete)
 	r.Post("/bases/{id}/move", s.h.move)

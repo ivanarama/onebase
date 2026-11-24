@@ -215,7 +215,7 @@ const tplIndex = `
     <div class="base-name">
       <span class="status-dot"></span>{{.Name}}
       {{if .Client}}
-        {{if .Running}}<span class="badge badge-run">{{t $.Lang "сервер отвечает"}}</span>{{else}}<span class="badge badge-stop">{{t $.Lang "сервер не отвечает"}}</span>{{end}}
+        {{if .Probing}}<span class="badge" data-client-probe="{{.ID}}">{{t $.Lang "Проверяем подключение"}}</span>{{else if .Running}}<span class="badge badge-run">{{t $.Lang "сервер отвечает"}}</span>{{else}}<span class="badge badge-stop">{{if .Problem}}{{t $.Lang .Problem}}{{else}}{{t $.Lang "Не удалось подключиться к серверу"}}{{end}}</span>{{end}}
       {{else}}
         {{if .Running}}<span class="badge badge-run">{{t $.Lang "работает"}}</span>{{else}}<span class="badge badge-stop">{{t $.Lang "остановлена"}}</span>{{end}}
       {{end}}
@@ -1191,6 +1191,31 @@ document.addEventListener('keydown', function(ev) {
   if (ev.preventDefault) ev.preventDefault();
   if (ev.stopPropagation) ev.stopPropagation();
   closeStartError();
+});
+</script>
+<script>
+document.querySelectorAll('[data-client-probe]').forEach(function (badge) {
+  var id = badge.getAttribute('data-client-probe');
+  var tries = 0;
+  function refresh() {
+    fetch('/bases/' + encodeURIComponent(id) + '/client-status', {cache:'no-store'})
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (status) {
+        if (!status) return;
+        if (status.pending) {
+          if (++tries < 25) setTimeout(refresh, 1000);
+          return;
+        }
+        badge.textContent = status.text;
+        badge.classList.add(status.running ? 'badge-run' : 'badge-stop');
+        var row = badge.closest('.base-item');
+        if (row) row.classList.toggle('running', status.running);
+      })
+      .catch(function () {
+        if (++tries < 25) setTimeout(refresh, 1000);
+      });
+  }
+  setTimeout(refresh, 500);
 });
 </script>
 </body></html>
