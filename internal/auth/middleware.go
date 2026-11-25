@@ -178,3 +178,22 @@ func OpenAccessFromContext(ctx context.Context) bool {
 	open, _ := ctx.Value(openAccessKey).(bool)
 	return open
 }
+
+const secureCookiesKey contextKey = "auth_secure_cookies"
+
+// SecureCookiePolicy passes the configured HTTPS terminator policy to UI routes.
+func (h *Handlers) SecureCookiePolicy(next http.Handler) http.Handler {
+	if !h.SecureCookies {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), secureCookiesKey, true)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+// SecureCookiesForRequest reports whether cookies need Secure for this request.
+func SecureCookiesForRequest(r *http.Request) bool {
+	secure, _ := r.Context().Value(secureCookiesKey).(bool)
+	return secure || r.TLS != nil
+}
