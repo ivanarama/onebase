@@ -233,7 +233,14 @@ type FormElement struct {
 	// и половина кнопок читается как отдельный блок. По умолчанию перенос, как
 	// было.
 	ScrollX    bool   `yaml:"scroll_x,omitempty"`
-	Background string `yaml:"background,omitempty"` // фон контейнера; читается только у ГруппаФормы (#1547), цвет проверяет csssafe.Color
+	Background string `yaml:"background,omitempty"` // фон: ГруппаФормы (#1547), СтраницыФормы (весь набор с полосой закладок), Кнопка; цвет проверяет csssafe.Color
+	// TitleColor / TitleBold — у kind: Страница: цвет и жирность заголовка её
+	// закладки; цвет — и у нижней черты активной закладки. TabTitlesBold — у
+	// СтраницыФормы: все заголовки набора жирные и крупнее (15px). Цвет
+	// проверяет csssafe.Color, недопустимый игнорируется.
+	TitleColor    string `yaml:"title_color,omitempty"`
+	TitleBold     bool   `yaml:"title_bold,omitempty"`
+	TabTitlesBold bool   `yaml:"tab_titles_bold,omitempty"`
 	// HeaderBackground / HeaderBorderColor — фон и цвет границы шапки таблицы
 	// ТабличнаяЧасть: на цветном фоне формы шапка иначе сливается со строками.
 	// Цвета проверяет csssafe.Color.

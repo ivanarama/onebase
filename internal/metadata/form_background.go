@@ -19,9 +19,10 @@ func FormElementBackgroundCSS(el *FormElement) string {
 }
 
 // FormElementSupportsBackground — виды элементов, для которых ключ background
-// применяется: контейнер и кнопка.
+// применяется: контейнеры (группа, набор страниц — фон всего набора вместе с
+// полосой закладок) и кнопка.
 func FormElementSupportsBackground(kind FormElementType) bool {
-	return kind == FormElementGroupBox || kind == FormElementButton
+	return kind == FormElementGroupBox || kind == FormElementPages || kind == FormElementButton
 }
 
 // FormTableHeaderColors — классы и CSS-переменные контейнера таблицы
