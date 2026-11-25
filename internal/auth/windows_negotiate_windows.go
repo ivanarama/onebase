@@ -25,7 +25,7 @@ var querySecurityContextToken = windows.NewLazySystemDLL("secur32.dll").NewProc(
 // acceptWindowsTicket принимает одношаговый Kerberos AP-REQ в оболочке
 // Negotiate. Контекст принадлежит только этому запросу. SEC_I_CONTINUE_NEEDED
 // (включая NTLM) не выдаёт сеанс и не оставляет незавершённого обмена.
-func acceptWindowsTicket(_ context.Context, spn string, ticket []byte) (string, []byte, error) {
+func acceptWindowsTicket(_ context.Context, settings DomainSettings, ticket []byte) (string, []byte, error) {
 	// Resolve secur32 from the system directory before using SSPI wrappers.
 	if err := querySecurityContextToken.Find(); err != nil {
 		return "", nil, err
@@ -67,7 +67,7 @@ func acceptWindowsTicket(_ context.Context, spn string, ticket []byte) (string, 
 		return "", nil, status
 	}
 	defer func() { _ = sspi.FreeContextBuffer((*byte)(unsafe.Pointer(target))) }() // #nosec G103 -- free the target name allocated by SSPI.
-	if !strings.EqualFold(windows.UTF16PtrToString(target), spn) {
+	if !strings.EqualFold(windows.UTF16PtrToString(target), settings.SPN) {
 		return "", nil, errors.New("SSPI: SPN билета не совпадает с настройкой сервера")
 	}
 	// QuerySecurityContextToken returns an owned token handle (unlike the

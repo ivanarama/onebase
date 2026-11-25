@@ -60,7 +60,7 @@ db=(--project /tmp/project --sqlite /tmp/base.db)
 onebase migrate "${db[@]}"
 printf '%s' "$TEST_ADMIN_PASSWORD" | onebase user add admin --admin --password-stdin "${db[@]}"
 printf '%s' "$(openssl rand -hex 32)Aa1!" | onebase user add operator --password-stdin "${db[@]}"
-export ONEBASE_PUBLIC_URL=https://erp.onebase.test ONEBASE_WINDOWS_SPN=HTTP/erp.onebase.test
-export ONEBASE_KRB5_REALM=ONEBASE.TEST ONEBASE_KRB5_KEYTAB=/tmp/erp.keytab
+unset ONEBASE_PUBLIC_URL ONEBASE_WINDOWS_SPN ONEBASE_KRB5_REALM ONEBASE_KRB5_KEYTAB
+timeout 60 python3 /test/configure.py
 touch /tmp/domain-ready
 exec onebase run --host 127.0.0.1 --port 8080 "${db[@]}"

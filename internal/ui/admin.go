@@ -287,7 +287,7 @@ func (s *Server) adminUserCard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	data := map[string]any{
-		"User": u, "WindowsAccountsSupported": auth.WindowsAccountsSupported(),
+		"User": u, "WindowsAccountsSupported": s.authRepo.WindowsAccountsSupported(r.Context()),
 		"DatabaseAccessLabel": s.tr(lang, "Доступ к базе"),
 		"DisabledLabel":       s.tr(lang, "Учётная запись отключена"),
 		"SaveStatusLabel":     s.tr(lang, "Сохранить состояние"),

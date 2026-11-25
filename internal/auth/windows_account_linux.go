@@ -12,10 +12,14 @@ import (
 	"unicode"
 )
 
-func resolveWindowsAccount(ctx context.Context, name string) (string, string, error) {
+func (r *Repo) resolveWindowsAccount(ctx context.Context, name string) (string, string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	return resolveWinbindAccount(name, os.Getenv("ONEBASE_KRB5_REALM"), func(option string) (string, error) {
+	settings, err := r.EffectiveDomainSettings(ctx)
+	if err != nil {
+		return "", "", err
+	}
+	return resolveWinbindAccount(name, settings.Realm, func(option string) (string, error) {
 		// Each option is constructed below. The account is a single option value,
 		// including when it contains spaces or starts with a dash.
 		cmd := exec.CommandContext(ctx, "/usr/bin/wbinfo", option) //nolint:gosec // G204: fixed binary, no shell.
@@ -37,7 +41,7 @@ func resolveWinbindAccount(name, realm string, wbinfo func(string) (string, erro
 		return "", "", errors.New(`укажите учётную запись в формате ДОМЕН\пользователь`)
 	}
 	if realm == "" {
-		return "", "", errors.New("для входа через домен укажите ONEBASE_KRB5_REALM")
+		return "", "", errors.New("укажите домен Kerberos в параметрах базы или ONEBASE_KRB5_REALM")
 	}
 	separator, err := wbinfo("--separator")
 	if err != nil {

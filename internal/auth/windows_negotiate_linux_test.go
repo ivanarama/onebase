@@ -10,9 +10,7 @@ import (
 )
 
 func TestLinuxKerberosRejectsLoginWhenVerifierUnavailable(t *testing.T) {
-	t.Setenv("ONEBASE_KRB5_REALM", "EXAMPLE.ORG")
-	t.Setenv("ONEBASE_KRB5_KEYTAB", filepath.Join(t.TempDir(), "missing.keytab"))
-	h := Handlers{WindowsSPN: "HTTP/erp.example.org"}
+	h := Handlers{WindowsDomain: DomainSettings{SPN: "HTTP/erp.example.org", Realm: "EXAMPLE.ORG", Keytab: filepath.Join(t.TempDir(), "missing.keytab")}}
 	request := func(ctx context.Context) {
 		t.Helper()
 		req := httptest.NewRequest(http.MethodGet, "https://erp.example.org/auth/windows", nil).WithContext(ctx)

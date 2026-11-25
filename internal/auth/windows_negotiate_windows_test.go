@@ -14,7 +14,7 @@ import (
 )
 
 func TestWindowsSSPIRejectsMalformedTicket(t *testing.T) {
-	if sid, _, err := acceptWindowsTicket(t.Context(), "HTTP/base.example.org", []byte("invalid")); err == nil || sid != "" {
+	if sid, _, err := acceptWindowsTicket(t.Context(), DomainSettings{SPN: "HTTP/base.example.org"}, []byte("invalid")); err == nil || sid != "" {
 		t.Fatalf("SSPI unexpectedly authenticated a malformed ticket")
 	}
 }
@@ -56,7 +56,7 @@ func TestWindowsDomainKerberos(t *testing.T) {
 	if status != sspi.SEC_I_CONTINUE_NEEDED {
 		t.Fatalf("initial client context: %v", status)
 	}
-	sid, reply, err := acceptWindowsTicket(t.Context(), spn, request[:out[0].BufferSize])
+	sid, reply, err := acceptWindowsTicket(t.Context(), DomainSettings{SPN: spn}, request[:out[0].BufferSize])
 	if err != nil {
 		t.Fatalf("accept domain ticket: %v", err)
 	}

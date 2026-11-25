@@ -8,7 +8,7 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-func resolveWindowsAccount(_ context.Context, name string) (string, string, error) {
+func (r *Repo) resolveWindowsAccount(_ context.Context, name string) (string, string, error) {
 	sid, _, kind, err := windows.LookupSID("", name)
 	if err != nil {
 		return "", "", fmt.Errorf("не удалось найти учётную запись Windows: %w", err)

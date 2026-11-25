@@ -80,11 +80,9 @@ def check(work):
     card = re.search(r'<a href="(/ui/admin/users/[\w-]+)"[^>]*>operator</a>', listing.text)
     assert card, "operator is missing from the user list"
     url = ORIGIN + card[1]
-    bound = admin.post(url, data={"action": "windows_account", "windows_enabled": "1",
-                                  "windows_account": r"ONEBASE\employee"}, timeout=15)
-    bound.raise_for_status()
     persisted = admin.get(url, timeout=10)
-    assert r"onebase\employee" in persisted.text.lower(), "user card did not save the Windows account"
+    persisted.raise_for_status()
+    assert r"onebase\employee" in persisted.text.lower(), "Enterprise did not see the Configurator binding"
 
     domain_login("employee", certificate, work, 200)
     domain_login("colleague", certificate, work, 403)

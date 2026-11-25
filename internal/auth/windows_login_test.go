@@ -11,7 +11,7 @@ import (
 )
 
 func TestWindowsLoginTransport(t *testing.T) {
-	h := Handlers{WindowsSPN: "HTTP/base.example.org", BaseURL: "https://base.example.org"}
+	h := Handlers{WindowsDomain: DomainSettings{SPN: "HTTP/base.example.org", PublicURL: "https://base.example.org"}}
 	for _, tc := range []struct {
 		target, peer string
 		allowed      bool
@@ -57,7 +57,7 @@ func TestNegotiateOnlyAcceptsVerifiedTicket(t *testing.T) {
 	if err := repo.AssignRole(ctx, user.ID, role.ID); err != nil {
 		t.Fatal(err)
 	}
-	h := &Handlers{Repo: repo, WindowsSPN: "HTTP/base.example.org", SecureCookies: true}
+	h := &Handlers{Repo: repo, WindowsDomain: DomainSettings{SPN: "HTTP/base.example.org"}, SecureCookies: true}
 	do := func(header, returnPath string) *httptest.ResponseRecorder {
 		t.Helper()
 		req := httptest.NewRequest(http.MethodGet, "/auth/windows?sid="+boundSID+"&return="+returnPath, nil)
@@ -65,8 +65,8 @@ func TestNegotiateOnlyAcceptsVerifiedTicket(t *testing.T) {
 		req.Header.Set("X-Remote-User", admin.Login)
 		req.Header.Set("X-Windows-SID", boundSID)
 		rec := httptest.NewRecorder()
-		h.negotiateWindows(rec, req, func(_ context.Context, spn string, ticket []byte) (string, []byte, error) {
-			if spn != h.WindowsSPN {
+		h.negotiateWindows(rec, req, func(_ context.Context, settings DomainSettings, ticket []byte) (string, []byte, error) {
+			if settings != h.WindowsDomain {
 				t.Fatal("incorrect service principal")
 			}
 			switch string(ticket) {

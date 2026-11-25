@@ -20,8 +20,8 @@ var kerberosAcceptor string
 // Bound both simultaneous processes and their lifetime, including on disconnect.
 var kerberosAcceptSlots = make(chan struct{}, 4)
 
-func acceptWindowsTicket(ctx context.Context, spn string, ticket []byte) (string, []byte, error) {
-	realm, keytab := os.Getenv("ONEBASE_KRB5_REALM"), os.Getenv("ONEBASE_KRB5_KEYTAB")
+func acceptWindowsTicket(ctx context.Context, settings DomainSettings, ticket []byte) (string, []byte, error) {
+	realm, keytab := settings.Realm, settings.Keytab
 	if realm == "" || !filepath.IsAbs(keytab) || len(ticket) == 0 || len(ticket) > maxWindowsTicket {
 		return "", nil, errors.New("вход через Kerberos: отсутствует конфигурация или неверный размер билета")
 	}
@@ -36,7 +36,7 @@ func acceptWindowsTicket(ctx context.Context, spn string, ticket []byte) (string
 	defer cancel()
 	// The system interpreter runs only embedded code in isolated mode. The
 	// binary ticket is passed on stdin, never in a command line or a log.
-	cmd := exec.CommandContext(ctx, "/usr/bin/python3", "-I", "-c", kerberosAcceptor, spn, realm, keytab) //nolint:gosec // G204: fixed executable and script; operator settings are separate arguments.
+	cmd := exec.CommandContext(ctx, "/usr/bin/python3", "-I", "-c", kerberosAcceptor, settings.SPN, realm, keytab) //nolint:gosec // G204: fixed executable and script; operator settings are separate arguments.
 	cmd.WaitDelay = time.Second
 	cmd.Stdin = bytes.NewReader(ticket)
 	cmd.Stderr = io.Discard

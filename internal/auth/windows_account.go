@@ -22,7 +22,7 @@ func (r *Repo) SetWindowsAccount(ctx context.Context, userID, account string) er
 		if !ok || domain == "" || name == "" || strings.Contains(name, `\`) {
 			return errors.New(`укажите учётную запись в формате ДОМЕН\пользователь`)
 		}
-		resolvedSID, display, err := resolveWindowsAccount(ctx, account)
+		resolvedSID, display, err := r.resolveWindowsAccount(ctx, account)
 		if err != nil {
 			return err
 		}

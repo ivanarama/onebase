@@ -63,7 +63,7 @@ func TestAdminCardWindowsAuthentication(t *testing.T) {
 
 	// A protected page prompts the browser to negotiate. Explicit logout
 	// redirects to /login, where the user must be able to choose another method.
-	h := auth.Handlers{Repo: repo, WindowsSPN: "HTTP/erp.example.test"}
+	h := auth.Handlers{Repo: repo, WindowsDomain: auth.DomainSettings{SPN: "HTTP/erp.example.test"}}
 	for _, tc := range []struct {
 		path string
 		auto bool

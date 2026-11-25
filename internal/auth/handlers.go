@@ -143,8 +143,8 @@ type Handlers struct {
 	// BaseURL — внешний адрес базы для redirect_uri провайдера
 	// (https://erp.example.com). Пусто → адрес собирается из запроса.
 	BaseURL string
-	// WindowsSPN is the HTTP service principal registered for shared Windows login.
-	WindowsSPN string
+	// WindowsDomain is the service profile loaded when this base starts.
+	WindowsDomain DomainSettings
 }
 
 // sessionMetaFromRequest собирает мету сессии пользовательского режима.

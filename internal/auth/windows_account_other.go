@@ -7,6 +7,6 @@ import (
 	"errors"
 )
 
-func resolveWindowsAccount(context.Context, string) (string, string, error) {
+func (r *Repo) resolveWindowsAccount(context.Context, string) (string, string, error) {
 	return "", "", errors.New("эта ОС не поддерживает привязку учётной записи Windows")
 }

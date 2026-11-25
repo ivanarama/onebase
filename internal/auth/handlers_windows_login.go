@@ -7,35 +7,25 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"os"
-	"path/filepath"
-	"runtime"
 	"strings"
 )
 
 // Kerberos tickets containing group memberships can exceed 16 KiB.
 const maxWindowsTicket = 64 << 10
 
-// WindowsAccountsSupported reports whether this host can be configured to bind
-// Windows users. Linux installations opt in with an AD realm and a service keytab.
-func WindowsAccountsSupported() bool {
-	return runtime.GOOS == "windows" || (runtime.GOOS == "linux" &&
-		strings.TrimSpace(os.Getenv("ONEBASE_KRB5_REALM")) != "" && filepath.IsAbs(os.Getenv("ONEBASE_KRB5_KEYTAB")))
-}
-
 // WindowsLoginAvailable describes the transport on which the browser may
 // attempt Integrated Authentication. Forwarded headers never enable it.
 func (h *Handlers) WindowsLoginAvailable(r *http.Request) bool {
-	return WindowsAccountsSupported() && h.windowsLoginTransport(r)
+	return h.WindowsDomain.accountsSupported() && h.windowsLoginTransport(r)
 }
 
 func (h *Handlers) windowsLoginTransport(r *http.Request) bool {
-	if h.WindowsSPN == "" {
+	if h.WindowsDomain.SPN == "" {
 		return false
 	}
 	host := (&url.URL{Host: r.Host}).Hostname()
 	if r.TLS == nil {
-		public, err := url.Parse(h.BaseURL)
+		public, err := url.Parse(h.WindowsDomain.PublicURL)
 		if err != nil || public.Scheme != "https" || public.Hostname() == "" {
 			return false
 		}
@@ -45,7 +35,7 @@ func (h *Handlers) windowsLoginTransport(r *http.Request) bool {
 		}
 		host = public.Hostname()
 	}
-	return host != "" && strings.EqualFold(h.WindowsSPN, "HTTP/"+host)
+	return host != "" && strings.EqualFold(h.WindowsDomain.SPN, "HTTP/"+host)
 }
 
 // WindowsLogin handles GET /auth/windows. Only an explicitly initiated
@@ -58,7 +48,7 @@ func (h *Handlers) WindowsLogin(w http.ResponseWriter, r *http.Request) {
 	h.negotiateWindows(w, r, acceptWindowsTicket)
 }
 
-func (h *Handlers) negotiateWindows(w http.ResponseWriter, r *http.Request, accept func(context.Context, string, []byte) (string, []byte, error)) {
+func (h *Handlers) negotiateWindows(w http.ResponseWriter, r *http.Request, accept func(context.Context, DomainSettings, []byte) (string, []byte, error)) {
 	w.Header().Set("Cache-Control", "no-store, private")
 	authorization := r.Header.Get("Authorization")
 	if authorization == "" {
@@ -76,7 +66,7 @@ func (h *Handlers) negotiateWindows(w http.ResponseWriter, r *http.Request, acce
 		w.WriteHeader(http.StatusForbidden)
 		return
 	}
-	sid, reply, err := accept(r.Context(), h.WindowsSPN, ticket)
+	sid, reply, err := accept(r.Context(), h.WindowsDomain, ticket)
 	if err != nil || sid == "" {
 		// Do not log tokens or issue a new challenge (which could cause a
 		// password prompt/loop for clients that fell back to NTLM).
