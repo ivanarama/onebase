@@ -188,7 +188,7 @@ func (s *Server) startTwoFactorSetup(w http.ResponseWriter, r *http.Request, u *
 		Value:    token,
 		Path:     "/ui/profile",
 		HttpOnly: true,
-		Secure:   r.TLS != nil,
+		Secure:   auth.SecureCookiesForRequest(r),
 		SameSite: http.SameSiteLaxMode,
 	})
 	s.renderTwoFactorProfile(w, r, u, map[string]any{
@@ -216,7 +216,7 @@ func clearEnrollmentCookie(w http.ResponseWriter, r *http.Request) {
 		Value:    "",
 		Path:     "/ui/profile",
 		HttpOnly: true,
-		Secure:   r.TLS != nil,
+		Secure:   auth.SecureCookiesForRequest(r),
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   -1,
 	})
