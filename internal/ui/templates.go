@@ -11,6 +11,7 @@ import (
 	"unicode"
 
 	"github.com/google/uuid"
+	"github.com/ivantit66/onebase/internal/csssafe"
 	"github.com/ivantit66/onebase/internal/i18n"
 	"github.com/ivantit66/onebase/internal/metadata"
 	processorpkg "github.com/ivantit66/onebase/internal/processor"
@@ -628,6 +629,13 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			}
 			return initial
 		},
+		"fieldLabelStyle": func(el *metadata.FormElement) template.CSS {
+			if color := csssafe.Color(el.LabelColor); color != "" {
+				return template.CSS("color:" + color + ";") //nolint:gosec // G203: цвет проверен csssafe.Color
+			}
+			return ""
+		},
+
 		// fieldTitleRU достаёт ru-вариант из map[string]string или возвращает fallback.
 		"fieldTitleRU": func(m map[string]string, fallback string) string {
 			if v, ok := m["ru"]; ok && v != "" {
@@ -680,8 +688,35 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 		"elAlign": func(el *metadata.FormElement) template.CSS {
 			return template.CSS(metadata.FormElementAlignCSS(el)) //nolint:gosec // G203: стиль собран только из нормализованных значений словаря выравнивания
 		},
+		// tabTitleStyle — стиль кнопки закладки страницы: title_color/title_bold
+		// страницы и tab_titles_bold набора. Цвет идёт через --ob-tab-color: им
+		// же красится черта активной закладки (правило .managed-tab-btn.active).
+		"tabTitleStyle": func(pages, page *metadata.FormElement) template.CSS {
+			var css string
+			if page != nil {
+				if color := csssafe.Color(page.TitleColor); color != "" {
+					css += "--ob-tab-color:" + color + ";color:" + color + ";"
+				}
+			}
+			if pages != nil && pages.TabTitlesBold {
+				css += "font-weight:700;font-size:15px;"
+			} else if page != nil && page.TitleBold {
+				css += "font-weight:700;"
+			}
+			return template.CSS(css) //nolint:gosec // G203: цвет прошёл csssafe.Color, остальное — константы
+		},
 		"elBackground": func(el *metadata.FormElement) template.CSS {
 			return template.CSS(metadata.FormElementBackgroundCSS(el)) //nolint:gosec // G203: значение прошло csssafe.Color, иначе пустая строка
+		},
+		// tableHeaderClass / tableHeaderVars — фон и граница шапки таблицы
+		// (header_background, header_border_color): классы и CSS-переменные.
+		"tableHeaderClass": func(el *metadata.FormElement) string {
+			classes, _ := metadata.FormTableHeaderColors(el)
+			return classes
+		},
+		"tableHeaderVars": func(el *metadata.FormElement) template.CSS {
+			_, vars := metadata.FormTableHeaderColors(el)
+			return template.CSS(vars) //nolint:gosec // G203: цвета прошли csssafe.Color, иначе пустая строка
 		},
 		"elFill": func(el *metadata.FormElement) bool {
 			return metadata.FormElementFillsHeight(el)
@@ -2252,6 +2287,7 @@ const tplList = `
     {{/* На свежем списке строка не выбрана — кнопка приходит с сервера уже
          приглушённой, дальше её состояние ведёт ui.js по выделению. */}}
     <button type="button" id="list-actions-btn" class="btn btn-secondary" data-ob-list-actions aria-disabled="true" title="{{t $.Lang "Сначала выберите строку списка"}}">⚙ {{t $.Lang "Действия"}} ▾</button>
+    {{range .ProcessorLinks}}<a class="btn btn-secondary" href="{{.URL}}">{{.Title}}</a>{{end}}
     <a class="btn btn-sm" href="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}/excel{{listExcelSuffix .Params .ListFormOff}}" style="background:#16a34a;color:#fff" title="{{t $.Lang "Скачать Excel"}}">{{t $.Lang "Excel ↓"}}</a>
   </div>
 </div>
@@ -3276,6 +3312,7 @@ const tplRegister = `
 <div class="row-top">
   <h2>{{.Register.DisplayName $.Lang}} — {{t $.Lang "движения"}}</h2>
   {{if .CanViewBalances}}<a class="btn btn-sm" href="/ui/register/{{lower .Register.Name}}/balances" style="background:#e2e8f0;color:#475569">{{t $.Lang "Остатки →"}}</a>{{end}}
+  <a class="btn btn-sm" data-ob-register-excel href="{{.ExcelURL}}">Excel ↓</a>
 </div>
 {{template "reg-filter-form" (dict "Fields" .FilterFields "Filter" .Filter "RefOpts" .RefOpts "ShowFromTo" .ShowPeriodFilter "ShowToOnly" false "HasFilters" .HasFilters "ResetURL" (printf "/ui/register/%s" (lower .Register.Name)) "Lang" $.Lang)}}
 <div class="card">
@@ -3307,6 +3344,7 @@ const tplRegister = `
 <div class="row-top">
   <h2>{{.Register.DisplayName $.Lang}} — {{t $.Lang "остатки"}}</h2>
   <a class="btn btn-sm" href="/ui/register/{{lower .Register.Name}}" style="background:#e2e8f0;color:#475569">{{t $.Lang "← Движения"}}</a>
+  <a class="btn btn-sm" data-ob-register-excel href="{{.ExcelURL}}">Excel ↓</a>
 </div>
 {{template "reg-filter-form" (dict "Fields" .FilterFields "Filter" .Filter "RefOpts" .RefOpts "ShowFromTo" false "ShowToOnly" .ShowPeriodFilter "HasFilters" .HasFilters "ResetURL" (printf "/ui/register/%s/balances" (lower .Register.Name)) "Lang" $.Lang)}}
 <div class="card">
@@ -3761,6 +3799,7 @@ const tplInfoReg = `
     {{template "list-refresh" (dict "URL" .RequestURI "Lang" $.Lang)}}
     {{if .CanWrite}}<a class="btn" href="/ui/inforeg/{{lower .InfoReg.Name}}/new">+ {{t $.Lang "Добавить запись"}}</a>{{end}}
   </div>
+  <a class="btn btn-sm" data-ob-register-excel href="{{.ExcelURL}}">Excel ↓</a>
 </div>
 {{template "reg-filter-form" (dict "Fields" .FilterFields "Filter" .Filter "RefOpts" .RefOpts "ShowFromTo" .InfoReg.Periodic "ShowToOnly" false "HasFilters" .HasFilters "ResetURL" .ResetURL "Context" .FilterContext "Lang" $.Lang)}}
 <div style="margin-bottom:8px">{{template "detail-panel-toggle" .}}</div>

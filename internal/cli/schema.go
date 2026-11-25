@@ -614,6 +614,8 @@ func managedFormSchema() map[string]any {
 			"kind":                stringSchema("Вид элемента формы"),
 			"data_path":           stringSchema("Путь к значению элемента"),
 			"equal_columns":       boolSchema("Равная ширина детей горизонтальной ГруппаФормы без scroll_x; по умолчанию false"),
+			"header_background":   stringSchema("CSS-цвет фона шапки ТабличнаяЧасть, включая сетку, простую таблицу и таблицу значений"),
+			"header_border_color": stringSchema("CSS-цвет границы шапки ТабличнаяЧасть"),
 			"choice_folders":      boolSchema("Разрешить выбор элементов и групп иерархического справочника в ссылочном поле; по умолчанию false"),
 			"choice_dropdown":     boolSchema("Предзагружать варианты в выпадающий список ссылочного поля; отсутствие ключа или true включает варианты, false оставляет плейсхолдер и текущее значение для выбора через форму подбора"),
 			"editable_admin_only": boolSchema("Разрешить редактирование поля только администратору; сервер отклоняет изменения от остальных пользователей; по умолчанию false"),
@@ -645,6 +647,19 @@ func managedFormSchema() map[string]any {
 		"additionalProperties": true,
 		"properties": map[string]any{
 			"schema": stringSchema("Версия схемы, сейчас onebase.form/v1"),
+			"actions": map[string]any{
+				"type":                 "object",
+				"additionalProperties": true,
+				"properties": map[string]any{
+					"copy": map[string]any{
+						"type":                 "object",
+						"additionalProperties": false,
+						"properties": map[string]any{
+							"visible": boolSchema("false — скрыть кнопку «Скопировать»; отсутствие ключа или true сохраняет кнопку при праве создания. Право создания, «Создать» и прямой адрес ?copy= не меняются"),
+						},
+					},
+				},
+			},
 			"form": map[string]any{
 				"type":                 "object",
 				"additionalProperties": true,

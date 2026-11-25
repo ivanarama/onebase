@@ -649,11 +649,12 @@ func formModuleYAMLSchema() *yamlLintSchema {
 		// неизвестными, а гейт CI считает предупреждение ошибкой — то есть
 		// документированный «language» у kind: ПолеКода не давал примеру
 		// пройти собственную проверку (#1014).
-		"orientation", "equal_columns", "background", "text_bold", "input_mask", "language", "virtual_columns",
+		"orientation", "equal_columns", "background", "title_color", "title_bold", "tab_titles_bold", "label_color", "text_bold", "input_mask", "language", "virtual_columns",
 		"deadline_warn",
 		"conceal", "reveal_when",
 		"title_from",
 		"hint_inline",
+		"header_background", "header_border_color",
 	} {
 		element.keys[k] = nil
 	}
@@ -698,7 +699,7 @@ func formModuleYAMLSchema() *yamlLintSchema {
 	// загрузчиком внутри блока form:.
 	formHeader := with(obj("entity", "name", "kind", "original_id", "auto_save_settings", "auto_save_data_in_settings", "vertical_scroll", "ref_card_button", "ref_card_button_admin_only", "enter_submits_form"), map[string]*yamlLintSchema{
 		"title": freeMap(),
-		"filter": seq(with(obj("field", "op", "value", "roles", "query", "removable"), map[string]*yamlLintSchema{
+		"filter": seq(with(obj("field", "op", "value", "roles", "query", "value_query", "removable"), map[string]*yamlLintSchema{
 			"label": freeMap(),
 		})),
 	})
@@ -720,6 +721,10 @@ func formModuleYAMLSchema() *yamlLintSchema {
 		// ok.post — «ОК» проводит документ, как в 1С.
 		"ok":    obj("visible", "post"),
 		"close": action,
+		// copy.visible:false убирает «Скопировать» у документа, который не
+		// копируют по смыслу (звонок, заявка — свидетельство конкретного
+		// обращения, #2241). Право создания и адрес ?copy= не меняются.
+		"copy": action,
 		// attachments.visible:false скрывает панель вложений выбранной
 		// managed-формы (план 181C, #1621); attachment endpoint не меняется.
 		"attachments": action,
