@@ -49,7 +49,7 @@ test('поле без списка: выбор подбором, очистка 
   expect(saleID).not.toBe(mainID);
 
   // Кнопка ✕ рядом с полем — та же очистка; Enter открывает подбор.
-  await page.locator('[data-ob-ref-clear]').click();
+  await field.locator('..').locator('[data-ob-ref-clear]').click();
   await expect(field).toHaveValue('');
   await field.focus();
   await page.keyboard.press('Enter');
@@ -64,4 +64,47 @@ test('поле без списка: выбор подбором, очистка 
   await open(page, url);
   await expect(page.locator('select[name="Склад"]')).toHaveValue(saleID);
   expect(await page.locator('select[name="Склад"]').evaluate((el) => el.selectedOptions[0].text)).toBe(SALE);
+});
+
+// The YAML supplies a managed choice_filter field. Changing its source must
+// keep the empty caption both before selection and after an invalidated value.
+test('поле без списка: пустая подпись после смены источника choice_filter', async ({ page }) => {
+  await login(page);
+  await open(page, '/ui/document/ПолеБезСписка/new');
+  const source = page.locator('select[name="Склад"]');
+  const target = page.locator('select[name="Место"]');
+  await expect(target).toHaveAttribute('data-ref-choice-dropdown', 'false');
+  await expect(target).toHaveAttribute('data-ref-choice-context', /dependent-no-list/);
+  const shown = () => target.evaluate(el => el.selectedOptions[0]?.text);
+  await expect.poll(shown).toBe('');
+
+  async function pickWarehouse(label) {
+    await source.click();
+    await expect(page.locator('#_ref-picker-modal')).toBeVisible();
+    const response = page.waitForResponse(r => {
+      const url = new URL(r.url());
+      return r.request().method() === 'GET' && decodeURI(url.pathname).endsWith('/_ref-options/МестоХранения') &&
+        url.searchParams.has('sources');
+    });
+    await page.locator('#_rp-list ._rp-item').filter({ hasText: label }).click();
+    expect((await response).ok()).toBe(true);
+    await expect(page.locator('#_ref-picker-modal')).toHaveCount(0);
+  }
+
+  await pickWarehouse(MAIN);
+  await expect(target).toHaveValue('');
+  await expect.poll(shown).toBe('');
+  await expect(target.locator('option')).toHaveCount(1);
+
+  await target.click();
+  await expect(page.locator('#_ref-picker-modal')).toBeVisible();
+  await page.locator('#_rp-list ._rp-item').filter({ hasText: 'Стеллаж 1 «Покосившийся»' }).click();
+  await expect(page.locator('#_ref-picker-modal')).toHaveCount(0);
+  expect(await target.inputValue()).toMatch(/^[0-9a-f-]{36}$/);
+  await expect.poll(shown).toBe('Стеллаж 1 «Покосившийся»');
+
+  await pickWarehouse(SALE);
+  await expect(target).toHaveValue('');
+  await expect.poll(shown).toBe('');
+  await expect(target.locator('option')).toHaveCount(1);
 });

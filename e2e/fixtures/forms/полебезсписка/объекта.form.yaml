@@ -8,6 +8,9 @@ attributes:
     type: DocumentRef.ПолеБезСписка
     save: true
     main: true
+  - name: Место
+    type: CatalogRef.МестоХранения
+    save: false
 elements:
   - kind: ПолеВвода
     name: ПолеСклад
@@ -16,3 +19,12 @@ elements:
   - kind: ПолеВвода
     name: ПолеКомментарий
     data_path: Объект.Комментарий
+  - kind: ПолеВвода
+    id: dependent-no-list
+    name: ПолеМесто
+    data_path: Форма.Место
+    choice_dropdown: false
+    choice_filter:
+      - field: Склад
+        op: eq
+        from: Объект.Склад

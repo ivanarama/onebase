@@ -5335,11 +5335,12 @@ function obChoiceApplyResponse(sel, data, selectedAtRequest) {
     selectedAllowed = data.selected_allowed;
   }
 
-  var blankLabel = '— выбрать —';
+  var collapsed = sel.getAttribute('data-ref-choice-dropdown') === 'false';
+  var blankLabel = collapsed ? '' : '— выбрать —';
   var selectedLabel = selectedAtRequest;
   for (var i = 0; i < sel.options.length; i++) {
     var current = sel.options[i];
-    if (!current.value && current.textContent) blankLabel = current.textContent;
+    if (!collapsed && !current.value && current.textContent) blankLabel = current.textContent;
     if (String(current.value) === selectedAtRequest) selectedLabel = current.textContent || selectedAtRequest;
   }
   while (sel.options.length) sel.remove(0);
@@ -5349,7 +5350,6 @@ function obChoiceApplyResponse(sel, data, selectedAtRequest) {
   sel.appendChild(blank);
 
   var selectedPresent = false;
-  var collapsed = sel.getAttribute('data-ref-choice-dropdown') === 'false';
   rows.forEach(function (row) {
     var id = row && row.id != null ? String(row.id) : '';
     if (!id) return;
