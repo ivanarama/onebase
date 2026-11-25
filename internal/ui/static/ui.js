@@ -3548,7 +3548,8 @@ window.obToast = obToast;
         seenAt = picked.seenAt;
         try { sessionStorage.setItem('obMsgSeenAtV2', String(seenAt)); } catch (e) {}
         picked.show.forEach(function (m) {
-          if (obClaimMessage(m.id)) obToast(m.text, m.kind);
+          var kind = m.status === 'important' || m.status === 'very_important' ? 'err' : m.kind;
+          if (obClaimMessage(m.id)) obToast(m.text, kind);
         });
       }).catch(function () {});
     }

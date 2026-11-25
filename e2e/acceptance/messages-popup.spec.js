@@ -12,14 +12,16 @@ test.afterEach(() => expect(errors).toEqual([]));
 
 for (const topology of ['standalone', 'iframe']) {
 for (const order of ['event-first', 'poll-first']) {
-  test(`one notification for one real form event: ${topology}, ${order}`, async ({ page }) => {
+for (const status of ['ordinary', 'important', 'very_important']) {
+  const button = { ordinary: 'Notify', important: 'Important', very_important: 'VeryImportant' }[status];
+  test(`one notification for one real form event: ${topology}, ${order}, ${status}`, async ({ page }) => {
     let form = page;
     if (topology === 'iframe') {
       await page.goto('/ui/app');
       await page.evaluate(() => window.obOpenTab('/ui/catalog/PopupProbe/new', 'Popup'));
       const handle = await page.locator('#ob-tabbody iframe').last().elementHandle();
       form = await handle.contentFrame();
-      await expect(form.locator('[data-ob-el="Notify"]')).toBeVisible();
+      await expect(form.locator(`[data-ob-el="${button}"]`)).toBeVisible();
     } else {
       await page.goto('/ui/catalog/PopupProbe/new');
     }
@@ -43,7 +45,7 @@ for (const order of ['event-first', 'poll-first']) {
       await barrier;
       await route.fulfill({ response });
     });
-    await form.locator('[data-ob-el="Notify"]').click();
+    await form.locator(`[data-ob-el="${button}"]`).click();
     if (order === 'poll-first') {
       await expect.poll(() => received?.messages?.length).toBe(1);
       await page.evaluate(() => window.obReloadMessages());
@@ -52,7 +54,7 @@ for (const order of ['event-first', 'poll-first']) {
     release();
     await page.unrouteAll({ behavior: 'wait' });
     // Observe total deliveries as well as currently visible toasts.
-    await expect.poll(() => form.locator('[data-ob-el="Notify"]').isEnabled()).toBe(true);
+    await expect.poll(() => form.locator(`[data-ob-el="${button}"]`).isEnabled()).toBe(true);
     await page.evaluate(() => window.obReloadMessages());
     await page.waitForTimeout(100);
     const messages = await (await page.request.get('/ui/messages')).json();
@@ -60,13 +62,26 @@ for (const order of ['event-first', 'poll-first']) {
     expect(messages.messages[0].id).toMatch(/^[0-9a-f-]{36}$/);
     expect(await shownCount(page)).toBe(1);
     // Distinct messages with identical text must each be delivered once.
-    await form.locator('[data-ob-el="Notify"]').click();
+    await form.locator(`[data-ob-el="${button}"]`).click();
     await expect.poll(async () => (await (await page.request.get('/ui/messages')).json()).messages.length).toBe(2);
     await expect.poll(() => shownCount(page)).toBe(2);
     await expect.poll(() => visibleCount(page)).toBe(2);
+    const notifications = toast(page).filter({ hasText: 'same-message' });
+    if (status !== 'ordinary') {
+      const stored = messages.messages[0];
+      expect(stored.status).toBe(status);
+      await expect(notifications.first()).toHaveCSS('background-color', 'rgb(254, 226, 226)');
+      await expect(notifications.last()).toHaveCSS('background-color', 'rgb(254, 226, 226)');
+      await page.waitForTimeout(10500);
+      await expect(notifications).toHaveCount(2);
+      await notifications.first().getByText('×', { exact: true }).click();
+      await expect(notifications).toHaveCount(1);
+    }
+
   });
 }
 
+}
 }
 
 for (const skew of [120000, -120000]) {

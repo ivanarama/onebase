@@ -73,3 +73,31 @@ test('без настройки — 5 секунд', () => {
   ctx.obToast('x', 'info');
   assert.equal(timers[0].ms, 5000);
 });
+
+// Exercise the production polling initializer, not a replacement renderer.
+// The public HTTP/DSL/browser matrix also checks both form/poll arrival orders.
+for (const status of ['important', 'very_important']) {
+  test(`polling preserves ${status} color and lifetime`, async () => {
+    const { ctx, timers, body } = sandbox(10);
+    ctx.document.readyState = 'complete';
+    ctx.document.addEventListener = () => {};
+    ctx.setInterval = () => {};
+    ctx.fetch = async path => {
+      assert.equal(path, '/ui/messages');
+      return { json: async () => ({ serverTime: new Date(t0).toISOString(), messages: [
+        { ...msg(0, 'same-message'), id: 'receipt', kind: 'info', status },
+      ] }) };
+    };
+    const initEnd = source.indexOf("\nif ('serviceWorker' in navigator)", end);
+    assert.ok(initEnd > end, 'production message initializer not found');
+    vm.runInContext(source.slice(end, initEnd), ctx);
+    await ctx.window.obReloadMessages();
+    const banner = body.children.find(c => c.id === 'ob-fmevt-banner');
+    assert.equal(banner.children.length, 1, 'one store receipt is shown once');
+    assert.equal(banner.children[0].children[0].textContent, 'same-message');
+    assert.match(banner.children[0].style.cssText, /background:#fee2e2/);
+    assert.equal(timers.length, 0, 'important messages have no auto-dismiss timer');
+    banner.children[0].children[1].onclick({ stopPropagation() {} });
+    assert.equal(banner.children.length, 0, 'explicit close still works');
+  });
+}

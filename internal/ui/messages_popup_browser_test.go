@@ -42,8 +42,25 @@ elements:
     name: Notify
     title: {ru: Notify}
     events: {Нажатие: Notify}
+  - kind: Кнопка
+    name: Important
+    title: {ru: Important}
+    events: {Нажатие: Important}
+  - kind: Кнопка
+    name: VeryImportant
+    title: {ru: VeryImportant}
+    events: {Нажатие: VeryImportant}
 `
-	source := "Процедура Notify()\n Сообщить(\"same-message\");\nКонецПроцедуры\n"
+	source := `Процедура Notify()
+ Сообщить("same-message");
+КонецПроцедуры
+Процедура Important()
+ Сообщить("same-message", СтатусСообщения.Важное);
+КонецПроцедуры
+Процедура VeryImportant()
+ Сообщить("same-message", СтатусСообщения.ОченьВажное);
+КонецПроцедуры
+`
 	if err := os.WriteFile(path, []byte(yaml), 0600); err != nil {
 		t.Fatal(err)
 	}
