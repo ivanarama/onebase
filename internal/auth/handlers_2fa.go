@@ -157,22 +157,28 @@ func (h *Handlers) clearChallengeCookie(w http.ResponseWriter, r *http.Request) 
 // фактор чужой учётки.
 func (h *Handlers) beginSecondFactor(w http.ResponseWriter, r *http.Request, user *User, enroll, enrollAuthorized bool, returnURL string) {
 	ch := Challenge{UserID: user.ID, Login: user.Login, Enroll: enroll, ReturnURL: returnURL}
-	if enroll && enrollAuthorized {
+	if h.issueLoginChallenge(w, r, &ch, enrollAuthorized) {
+		h.renderTwoFactor(w, ch, "")
+	}
+}
+
+func (h *Handlers) issueLoginChallenge(w http.ResponseWriter, r *http.Request, ch *Challenge, enrollAuthorized bool) bool {
+	if ch.Enroll && enrollAuthorized {
 		secret, err := GenerateTOTPSecret()
 		if err != nil {
 			h.internalError(w, r, "генерация секрета 2FA", err)
-			return
+			return false
 		}
 		ch.Secret = secret
 		ch.EnrollAuthorized = true
 	}
-	token, err := h.challenges().Issue(ch)
+	token, err := h.challenges().Issue(*ch)
 	if err != nil {
 		h.internalError(w, r, "выдача challenge второго фактора", err)
-		return
+		return false
 	}
 	h.setChallengeCookie(w, r, token)
-	h.renderTwoFactor(w, ch, "")
+	return true
 }
 
 // renderTwoFactor рисует страницу шага 2FA.
@@ -219,8 +225,20 @@ func (h *Handlers) currentChallenge(r *http.Request) (Challenge, string, bool) {
 	if err != nil || cookie.Value == "" {
 		return Challenge{}, "", false
 	}
-	ch, ok := h.challenges().Get(cookie.Value)
+	ch, ok := h.loginChallenge(r, cookie.Value)
 	return ch, cookie.Value, ok
+}
+
+func (h *Handlers) loginChallenge(r *http.Request, token string) (Challenge, bool) {
+	ch, ok := h.challenges().Get(token)
+	if ok && ch.windowsSID != "" {
+		user, err := h.Repo.GetByWindowsSID(r.Context(), ch.windowsSID)
+		if err != nil || user == nil || user.ID != ch.UserID {
+			h.challenges().Delete(token)
+			return Challenge{}, false
+		}
+	}
+	return ch, ok
 }
 
 // TwoFactorQR отдаёт QR-код otpauth:// для текущей настройки. Секрет берётся
@@ -431,7 +449,7 @@ func (h *Handlers) completeChallengeSession(w http.ResponseWriter, r *http.Reque
 		h.internalError(w, r, "чтение пользователя после второго фактора", err)
 		return challengeOutcome{}, err
 	}
-	sessionToken, err := h.Repo.CreateSession(r.Context(), user.ID, sessionMetaFromRequest(r))
+	sessionToken, err := h.createChallengeSession(r, ch)
 	if err != nil {
 		h.internalError(w, r, "создание сессии после второго фактора", err)
 		return challengeOutcome{}, err
@@ -450,6 +468,13 @@ func (h *Handlers) completeChallengeSession(w http.ResponseWriter, r *http.Reque
 		returnURL = "/ui"
 	}
 	return challengeOutcome{returnURL: returnURL}, nil
+}
+
+func (h *Handlers) createChallengeSession(r *http.Request, ch Challenge) (string, error) {
+	if ch.windowsSID != "" {
+		return h.Repo.CreateWindowsSession(r.Context(), ch.UserID, ch.windowsSID, sessionMetaFromRequest(r))
+	}
+	return h.Repo.CreateSession(r.Context(), ch.UserID, sessionMetaFromRequest(r))
 }
 
 // finishSecondFactor — успешное подтверждение обычным кодом.
@@ -500,7 +525,7 @@ func (h *Handlers) TwoFactorJSON(w http.ResponseWriter, r *http.Request) {
 			token = cookie.Value
 		}
 	}
-	ch, ok := h.challenges().Get(token)
+	ch, ok := h.loginChallenge(r, token)
 	if !ok {
 		http.Error(w, `{"error":"challenge expired"}`, http.StatusUnauthorized)
 		return
@@ -527,7 +552,7 @@ func (h *Handlers) TwoFactorJSON(w http.ResponseWriter, r *http.Request) {
 		h.internalErrorJSON(w, r, "чтение пользователя после второго фактора", err)
 		return
 	}
-	sessionToken, err := h.Repo.CreateSession(r.Context(), user.ID, sessionMetaFromRequest(r))
+	sessionToken, err := h.createChallengeSession(r, ch)
 	if err != nil {
 		h.internalErrorJSON(w, r, "создание сессии после второго фактора (JSON)", err)
 		return

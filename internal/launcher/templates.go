@@ -1140,11 +1140,12 @@ function startBase(el, id) {
       win.document.close();
     } catch (e) {}
   }
-  fetch('/bases/' + id + '/start', {method:'POST'})
+  fetch('/bases/' + id + '/start?open=enterprise', {method:'POST'})
     .then(function(r){ return r.json(); })
     .then(function(d){
-      if (d.url) {
-        if (win) win.location.href = d.url;
+      if (d.opened || d.url) {
+        if (win && d.opened) win.close();
+        else if (win) win.location.href = d.url;
         setTimeout(function(){ window.location.href = d.launcher_url || ('/?sel=' + id); }, 800);
       } else {
         showStartError(win, d.error || '{{t $.Lang "Неизвестная ошибка"}}', d.fix, id);

@@ -50,7 +50,8 @@ import (
 // История:
 //
 //	1 — введение самой ревизии (#1057).
-const SchemaRevision = 1
+//	2 — отключённые учётные записи: старый бинарь разрешает им вход.
+const SchemaRevision = 2
 
 // schemaRevisionTable — служебная таблица с единственной строкой (id = 1).
 const schemaRevisionTable = "_schema_revision"

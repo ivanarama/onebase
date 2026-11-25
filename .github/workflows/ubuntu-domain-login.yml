@@ -1,0 +1,56 @@
+name: Ubuntu domain login
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/ubuntu-domain-login.yml'
+      - 'internal/auth/**'
+      - 'internal/api/server.go'
+      - 'internal/launcher/admin_domain_settings*.go'
+      - 'internal/launcher/admin_handlers.go'
+      - 'internal/launcher/server.go'
+      - 'internal/ui/admin.go'
+      - 'scripts/e2e-ubuntu-kerberos*'
+      - 'e2e/kerberos/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  domain-login:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      CGO_ENABLED: '0'
+      RELEASE_PUBLIC_KEY: ${{ vars.RELEASE_PUBLIC_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: .go-version
+      - name: Build Ubuntu server
+        run: |
+          version="test-$(git rev-parse --short=12 HEAD)"
+          echo "ONEBASE_BUILD=$version" >> "$GITHUB_ENV"
+          flags="-s -w -X github.com/ivantit66/onebase/internal/version.Build=$version"
+          flags+=" -X github.com/ivantit66/onebase/internal/selfupdate.PublicKey=$RELEASE_PUBLIC_KEY"
+          flags+=" -X github.com/ivantit66/onebase/internal/selfupdate.RequireSignature=1"
+          go build -buildvcs=true -ldflags "$flags" -o "$RUNNER_TEMP/onebase" ./cmd/onebase
+      - name: Sign in to OneBase against Samba Active Directory
+        run: bash scripts/e2e-ubuntu-kerberos.sh "$RUNNER_TEMP/onebase"
+      - name: Package the tested binary
+        run: |
+          dest="$RUNNER_TEMP/OneBase-Ubuntu-x64"
+          go run ./tools/licensebundle -release -out "$dest" -version "$ONEBASE_BUILD" "$RUNNER_TEMP/onebase"
+          cp "$RUNNER_TEMP/onebase" docs/ubuntu-domain-login.md "$dest/"
+          tar -C "$RUNNER_TEMP" -czf "$RUNNER_TEMP/OneBase-Ubuntu-x64.tar.gz" OneBase-Ubuntu-x64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OneBase-Ubuntu-x64
+          path: ${{ runner.temp }}/OneBase-Ubuntu-x64.tar.gz
+          if-no-files-found: error
+          retention-days: 90

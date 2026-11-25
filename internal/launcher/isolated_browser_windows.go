@@ -8,7 +8,17 @@ import (
 	"path/filepath"
 
 	"github.com/ivantit66/onebase/internal/i18n/i18nerr"
+	"golang.org/x/sys/windows"
 )
+
+// openDefaultBrowser asks the shell to open the URL for this Windows user.
+func openDefaultBrowser(url string) error {
+	target, err := windows.UTF16PtrFromString(url)
+	if err != nil {
+		return err
+	}
+	return windows.ShellExecute(0, nil, target, nil, nil, windows.SW_SHOWNORMAL)
+}
 
 // chromiumCandidates возвращает возможные пути Chromium-браузеров в порядке
 // приоритета: Edge (предустановлен на Windows) → Chrome → Chromium.

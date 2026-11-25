@@ -33,19 +33,7 @@ func OpenPath(path string) error {
 // Живёт здесь, а не рядом с окном лаунчера: браузер по URL открывает и
 // `onebase dev --open`, и сборка с нативным окном (там window.go не собирается).
 func OpenBrowser(url string) {
-	var cmd *exec.Cmd
-	switch runtime.GOOS {
-	case "windows":
-		cmd = exec.Command("cmd", "/c", "start", "", url) //nolint:gosec // G204: имя программы фиксировано, аргументы — из флагов CLI администратора на его же машине; shell не запускается
-	case "darwin":
-		cmd = exec.Command("open", url) //nolint:gosec // G204: имя программы фиксировано, аргументы — из флагов CLI администратора на его же машине; shell не запускается
-	default:
-		cmd = exec.Command("xdg-open", url) //nolint:gosec // G204: имя программы фиксировано, аргументы — из флагов CLI администратора на его же машине; shell не запускается
-	}
-	noWindow(cmd)
-	// Браузер мог не найтись — открыть окно всё равно нечем, но пусть это
-	// будет видно: пользователь жалуется «нажал, ничего не произошло».
-	bestEffort("открыть URL во внешнем браузере", cmd.Start())
+	bestEffort("открыть URL во внешнем браузере", openDefaultBrowser(url))
 }
 
 // BrowseDir opens a native folder picker dialog and returns the selected path.

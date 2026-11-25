@@ -99,23 +99,29 @@ func passwordLoginBreakGlass() bool {
 // таблица дают пустую политику: аутентификация обязана работать и на базе,
 // созданной до плана 84.
 func (r *Repo) AuthPolicy(ctx context.Context) Policy {
-	if r == nil || r.db == nil {
-		return Policy{}
-	}
-	raw, ok, err := r.db.GetSetting(ctx, authPolicyKey)
-	if err != nil || !ok || strings.TrimSpace(raw) == "" {
-		if err != nil {
-			authLog().Warn("не удалось прочитать политики аутентификации", "err", err)
-		}
-		return Policy{}
-	}
-	var p Policy
-	if err := json.Unmarshal([]byte(raw), &p); err != nil {
-		authLog().Error("битый JSON политик аутентификации — политики не применяются",
-			"ключ", authPolicyKey, "err", err)
-		return Policy{}
+	p, err := r.readAuthPolicy(ctx)
+	if err != nil {
+		authLog().Error("не удалось прочитать политики аутентификации", "err", err)
 	}
 	return p
+}
+
+func (r *Repo) readAuthPolicy(ctx context.Context) (Policy, error) {
+	if r == nil || r.db == nil {
+		return Policy{}, fmt.Errorf("auth: хранилище политик недоступно")
+	}
+	raw, ok, err := r.db.GetSetting(ctx, authPolicyKey)
+	if err != nil || !ok {
+		return Policy{}, err
+	}
+	var p *Policy
+	if err := json.Unmarshal([]byte(raw), &p); err != nil {
+		return Policy{}, fmt.Errorf("auth: чтение %s: %w", authPolicyKey, err)
+	}
+	if p == nil {
+		return Policy{}, fmt.Errorf("auth: %s должен быть объектом", authPolicyKey)
+	}
+	return *p, nil
 }
 
 // SaveAuthPolicy сохраняет политики.
@@ -168,7 +174,7 @@ func (r *Repo) twoFactorLockoutRisk(ctx context.Context, p Policy, excludeUserID
 	// Администраторы — невосстановимый случай: если заперты они, выдать код
 	// привязки некому вообще. (Роли админ ещё мог бы разлочить, будь он в базе.)
 	if p.Require2FAAdmins {
-		total, err := r.countUsers(ctx, "WHERE is_admin")
+		total, err := r.countUsers(ctx, "WHERE NOT disabled AND is_admin")
 		if err != nil {
 			return "", err
 		}
@@ -206,12 +212,12 @@ func (r *Repo) twoFactorLockoutRisk(ctx context.Context, p Policy, excludeUserID
 // вычитается из подсчёта: так проверяется «что будет, если снять фактор у него».
 func (r *Repo) countBoundAdmins(ctx context.Context, excludeUserID string) (int, error) {
 	if excludeUserID == "" {
-		return r.countUsers(ctx, "WHERE is_admin AND totp_enabled")
+		return r.countUsers(ctx, "WHERE NOT disabled AND is_admin AND totp_enabled")
 	}
 	d := r.db.Dialect()
 	var n int
 	err := r.db.QueryRow(ctx,
-		`SELECT COUNT(*) FROM _users WHERE is_admin AND totp_enabled AND id <> `+d.Placeholder(1),
+		`SELECT COUNT(*) FROM _users WHERE NOT disabled AND is_admin AND totp_enabled AND id <> `+d.Placeholder(1),
 		excludeUserID).Scan(&n)
 	return n, err
 }
@@ -226,7 +232,7 @@ func (r *Repo) countBoundRoleMembers(ctx context.Context, roleName, excludeUserI
 	err := r.db.QueryRow(ctx, `SELECT COUNT(*) FROM _users u
 		JOIN _user_roles ur ON ur.user_id = u.id
 		JOIN _roles rl ON rl.id = ur.role_id
-		WHERE rl.name = `+d.Placeholder(1)+` AND u.totp_enabled AND u.id <> `+d.Placeholder(2),
+		WHERE NOT u.disabled AND rl.name = `+d.Placeholder(1)+` AND u.totp_enabled AND u.id <> `+d.Placeholder(2),
 		roleName, excludeUserID).Scan(&n)
 	return n, err
 }
@@ -244,7 +250,7 @@ func (r *Repo) countRoleMembers(ctx context.Context, roleName string, withTOTP b
 	q := `SELECT COUNT(*) FROM _users u
 		JOIN _user_roles ur ON ur.user_id = u.id
 		JOIN _roles rl ON rl.id = ur.role_id
-		WHERE rl.name = ` + d.Placeholder(1)
+		WHERE NOT u.disabled AND rl.name = ` + d.Placeholder(1)
 	if withTOTP {
 		q += ` AND u.totp_enabled`
 	}

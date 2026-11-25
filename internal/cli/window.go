@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"io"
 
 	"github.com/ivantit66/onebase/internal/launcher"
 	"github.com/spf13/cobra"
@@ -21,6 +22,13 @@ var windowCmd = &cobra.Command{
 			return fmt.Errorf("window: нативные окна доступны только в GUI-сборке под Windows (-tags webview)")
 		}
 		url, _ := cmd.Flags().GetString("url")
+		if url == "-" {
+			raw, err := io.ReadAll(io.LimitReader(cmd.InOrStdin(), 8193))
+			if err != nil || len(raw) > 8192 {
+				return fmt.Errorf("window: не удалось прочитать адрес из stdin")
+			}
+			url = string(raw)
+		}
 		title, _ := cmd.Flags().GetString("title")
 		if url == "" {
 			return fmt.Errorf("window: требуется --url")

@@ -14,6 +14,15 @@
     ]
   },
   "modules": {
+    "github.com/alexbrainman/sspi": {
+      "license": "BSD-3-Clause",
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "dd26a7abddd02e2d0aba97805b31f248ef7835d9e10da289b22e3b8ab78b324d"
+        }
+      ]
+    },
     "github.com/aymerick/douceur": {
       "license": "MIT",
       "files": [

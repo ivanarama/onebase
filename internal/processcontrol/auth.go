@@ -75,6 +75,12 @@ func StopProof(secret, baseID, instance, nonce string) string {
 	return proof(secret, "stop", baseID, instance, nonce)
 }
 
+// WindowsLoginProof binds the launcher's Windows identity to one managed base
+// generation. The prepare proof and each one-time browser proof are distinct.
+func WindowsLoginProof(secret, baseID, instance, sid string, port int, challenge string) string {
+	return proof(secret, "windows-login", baseID, instance, sid, strconv.Itoa(port), challenge)
+}
+
 // Verify compares encoded proofs without timing-dependent early exits.
 func Verify(got, want string) bool {
 	gotBytes, gotErr := hex.DecodeString(got)

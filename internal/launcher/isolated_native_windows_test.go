@@ -6,6 +6,7 @@ package launcher
 // (go test -tags webview ./internal/launcher/).
 
 import (
+	"io"
 	"strings"
 	"testing"
 )
@@ -20,10 +21,14 @@ func TestNativeIsolatedCommand(t *testing.T) {
 		t.Fatal("nativeIsolatedCommand должен вернуть команду")
 	}
 	joined := strings.Join(cmd.Args, " ")
-	for _, want := range []string{"window", "--url", "http://localhost:8080/ui"} {
+	for _, want := range []string{"window", "--url -"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("аргументы не содержат %q: %v", want, cmd.Args)
 		}
+	}
+	input, err := io.ReadAll(cmd.Stdin)
+	if err != nil || string(input) != "http://localhost:8080/ui" || strings.Contains(joined, string(input)) {
+		t.Fatal("native window URL must be passed through stdin only")
 	}
 	found, inherited := 0, false
 	for _, e := range cmd.Env {

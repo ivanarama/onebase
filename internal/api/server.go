@@ -16,6 +16,7 @@ import (
 	"github.com/ivantit66/onebase/internal/auth"
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/incident"
+	"github.com/ivantit66/onebase/internal/logging"
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/metrics"
 	"github.com/ivantit66/onebase/internal/processcontrol"
@@ -88,6 +89,10 @@ func New(reg *runtime.Registry, store *storage.DB, interp *interpreter.Interpret
 
 	// Public auth routes (no authentication required)
 	publicURL := strings.TrimSpace(os.Getenv("ONEBASE_PUBLIC_URL"))
+	domain, err := authRepo.EffectiveDomainSettings(context.Background())
+	if err != nil {
+		logging.Component("auth").Error("не удалось прочитать параметры доменного входа", "err", err)
+	}
 	authH := &auth.Handlers{
 		Repo:    authRepo,
 		Auditor: store,
@@ -96,7 +101,9 @@ func New(reg *runtime.Registry, store *storage.DB, interp *interpreter.Interpret
 		// (SEC-05). За HTTPS-терминатором r.TLS у запроса пустой, и без этого
 		// вывода куки уходили бы без флага Secure, хотя соединение до
 		// пользователя зашифровано.
-		SecureCookies: envBool("ONEBASE_SECURE_COOKIES") || strings.HasPrefix(strings.ToLower(publicURL), "https://"),
+		SecureCookies: envBool("ONEBASE_SECURE_COOKIES") ||
+			strings.HasPrefix(strings.ToLower(publicURL), "https://") ||
+			strings.HasPrefix(strings.ToLower(domain.PublicURL), "https://"),
 		// 5 неудач с одного IP по одному логину → блок на минуту (план 53).
 		// Общий с basic-auth HTTP-сервисов (см. uiCfg.LoginLimit).
 		LoginLimit: loginLimit,
@@ -105,13 +112,15 @@ func New(reg *runtime.Registry, store *storage.DB, interp *interpreter.Interpret
 		AppName: cfg.AppName,
 		// Внешний адрес для redirect_uri провайдера SSO: за обратным прокси
 		// Host запроса не совпадает с публичным адресом.
-		BaseURL: publicURL,
+		BaseURL:       publicURL,
+		WindowsDomain: domain,
 	}
 	r.Get("/login", authH.LoginPage)
 	r.Post("/login", authH.LoginSubmit)
 	r.Post("/logout", authH.Logout)
 	r.Get("/auth/status", authH.Status)
 	r.Post("/auth/login", authH.LoginJSON)
+	r.Get("/auth/windows", authH.WindowsLogin)
 	r.Get("/auth/bootstrap", authH.Bootstrap)
 	// Второй фактор (план 84): шаг между паролем и сессией.
 	r.Get("/login/2fa", authH.TwoFactorPage)
@@ -134,6 +143,7 @@ func New(reg *runtime.Registry, store *storage.DB, interp *interpreter.Interpret
 	// HMAC, а stop подписан для конкретного instance процесса. Debug bearer
 	// намеренно отдельный и живёт только в запустившем launcher-процессе.
 	if controlToken != "" && baseID != "" && processInstanceErr == nil {
+		authH.MountLocalWindowsLogin(r, controlToken, baseID, processInstance, processcontrol.CurrentWindowsSID())
 		r.Route("/debug/process", func(r chi.Router) {
 			r.Get("/identity", func(w http.ResponseWriter, req *http.Request) {
 				challenge := req.URL.Query().Get(processcontrol.ChallengeQuery)

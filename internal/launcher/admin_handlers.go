@@ -49,6 +49,9 @@ func (h *handler) cfgAdminUsers(w http.ResponseWriter, r *http.Request) {
 	sessionEndedJS, _ := json.Marshal(tr(lang, "Сессия конфигуратора завершена — войдите заново"))
 	unexpectedResponseJS, _ := json.Marshal(tr(lang, "Неожиданный ответ сервера"))
 	configuratorLoginURLJS, _ := json.Marshal("/bases/" + b.ID + "/configurator/login")
+	windowsSupported := repo.WindowsAccountsSupported(r.Context())
+	windowsAuthLabel := escHTML(tr(lang, "Аутентификация Windows"))
+	hasWindowsEditor := false
 
 	// Build language options for the user lang selector
 	langOpts := `<option value="">—</option>`
@@ -126,9 +129,19 @@ func (h *handler) cfgAdminUsers(w http.ResponseWriter, r *http.Request) {
 		if u.Lang != "" {
 			langLabel = u.Lang
 		}
-		html += fmt.Sprintf(`<tr%s><td style="padding:5px 8px">%s</td><td style="padding:5px 8px">%s</td><td style="padding:5px 8px;text-align:center">%s</td><td style="padding:5px 8px;color:#888">%s</td><td style="padding:5px 8px"><button onclick="cfgUserLang('%s','%s')" style="background:#7c3aed;color:#fff;border:none;padding:3px 8px;border-radius:3px;cursor:pointer;font-size:11px">%s</button></td><td style="padding:5px 8px;white-space:nowrap"><button onclick="cfgUserRoles('%s')" style="background:#0e7490;color:#fff;border:none;padding:3px 8px;border-radius:3px;cursor:pointer;font-size:11px;margin-right:4px">Роли</button><button onclick="cfgUserPasswd('%s')" style="background:#f59e0b;color:#fff;border:none;padding:3px 8px;border-radius:3px;cursor:pointer;font-size:11px;margin-right:4px">Пароль</button><button onclick="cfgUserDenyPasswd('%s',%v)" title="%s" style="%s;border:none;padding:3px 8px;border-radius:3px;cursor:pointer;font-size:11px;margin-right:4px">%s</button><button onclick="cfgUserShowInList('%s',%v)" title="%s" style="%s;border:none;padding:3px 8px;border-radius:3px;cursor:pointer;font-size:11px;margin-right:4px">%s</button><button onclick="cfgUserAIData('%s',%v)" title="%s" style="%s;border:none;padding:3px 8px;border-radius:3px;cursor:pointer;font-size:11px;margin-right:4px">%s</button><button onclick="cfgUserDel('%s')" style="color:#c00;background:none;border:none;cursor:pointer;font-size:11px" title="Удалить">✕</button></td></tr>`,
+		windowsButton := ""
+		if windowsSupported || u.WindowsAccount != "" {
+			hasWindowsEditor = true
+			label := windowsAuthLabel
+			if u.WindowsAccount != "" {
+				label = escHTML(u.WindowsAccount)
+			}
+			windowsButton = fmt.Sprintf(`<button type="button" class="btn-check" onclick="cfgUserWindowsAccount(this)" data-user-id="%s" data-account="%s" data-login="%s" title="%s" style="margin:0 4px 2px 0;padding:3px 8px;font-size:11px">%s</button>`,
+				escHTML(u.ID), escHTML(u.WindowsAccount), escHTML(u.Login), windowsAuthLabel, label)
+		}
+		html += fmt.Sprintf(`<tr%s><td style="padding:5px 8px">%s</td><td style="padding:5px 8px">%s</td><td style="padding:5px 8px;text-align:center">%s</td><td style="padding:5px 8px;color:#888">%s</td><td style="padding:5px 8px"><button onclick="cfgUserLang('%s','%s')" style="background:#7c3aed;color:#fff;border:none;padding:3px 8px;border-radius:3px;cursor:pointer;font-size:11px">%s</button></td><td style="padding:5px 8px;line-height:1.8">%s<button onclick="cfgUserRoles('%s')" style="background:#0e7490;color:#fff;border:none;padding:3px 8px;border-radius:3px;cursor:pointer;font-size:11px;margin-right:4px">Роли</button><button onclick="cfgUserPasswd('%s')" style="background:#f59e0b;color:#fff;border:none;padding:3px 8px;border-radius:3px;cursor:pointer;font-size:11px;margin-right:4px">Пароль</button><button onclick="cfgUserDenyPasswd('%s',%v)" title="%s" style="%s;border:none;padding:3px 8px;border-radius:3px;cursor:pointer;font-size:11px;margin-right:4px">%s</button><button onclick="cfgUserShowInList('%s',%v)" title="%s" style="%s;border:none;padding:3px 8px;border-radius:3px;cursor:pointer;font-size:11px;margin-right:4px">%s</button><button onclick="cfgUserAIData('%s',%v)" title="%s" style="%s;border:none;padding:3px 8px;border-radius:3px;cursor:pointer;font-size:11px;margin-right:4px">%s</button><button onclick="cfgUserDel('%s')" style="color:#c00;background:none;border:none;cursor:pointer;font-size:11px" title="Удалить">✕</button></td></tr>`,
 			bg, escHTML(u.Login), escHTML(u.FullName), admin, u.CreatedAt.Format("02.01.2006"),
-			u.ID, u.Lang, langLabel,
+			u.ID, u.Lang, langLabel, windowsButton,
 			u.ID,
 			u.ID,
 			u.ID, u.DenyPasswdChange, denyTitle, denyStyle, denyIcon,
@@ -139,10 +152,48 @@ func (h *handler) cfgAdminUsers(w http.ResponseWriter, r *http.Request) {
 	if len(users) == 0 {
 		html += `<tr><td colspan="6" style="padding:20px;text-align:center;color:#999">Нет пользователей</td></tr>`
 	}
-	html += `</table></div>
+	html += `</table></div>`
+	if hasWindowsEditor {
+		html += `<dialog id="cfg-windows-dialog" aria-labelledby="cfg-windows-title" oncancel="if(this.querySelector('fieldset').disabled)event.preventDefault()" style="margin:auto;border:1px solid #c8d0de;border-radius:6px;padding:18px;min-width:280px">
+  <form onsubmit="cfgSaveWindowsAccount(event,this)">
+  <fieldset style="display:grid;gap:10px;padding:0;margin:0;border:0">
+    <strong id="cfg-windows-title">` + windowsAuthLabel + ` · <span id="cfg-windows-login"></span></strong>
+    <label><input type="checkbox" name="enabled" onchange="this.form.elements.account.disabled=!this.checked"> ` + windowsAuthLabel + `</label>
+    <label>` + escHTML(tr(lang, "Учётная запись Windows")) + `
+      <input type="text" name="account" placeholder="DOMAIN\user" required autocomplete="off" spellcheck="false" style="display:block;width:100%;margin-top:4px;padding:5px">
+    </label>
+    <div role="alert" style="color:#b91c1c"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end">
+      <button type="button" class="btn-secondary" onclick="this.closest('dialog').close()">` + escHTML(tr(lang, "Отмена")) + `</button>
+      <button type="submit" class="btn-save">` + escHTML(tr(lang, "Сохранить привязку")) + `</button>
+    </div>
+  </fieldset></form>
+</dialog>`
+	}
+	html += `
 <script>
 function cfgUserNew(){document.getElementById('cfg-user-new').style.display='block';document.getElementById('cfg-un').focus()}
 function cfgUserRoles(id){cfgAdmin('users/roles?uid='+encodeURIComponent(id))}
+function cfgUserWindowsAccount(button){
+  var dialog=document.getElementById('cfg-windows-dialog');
+  var form=dialog.querySelector('form');
+  form.dataset.userId=button.dataset.userId;
+  document.getElementById('cfg-windows-login').textContent=button.dataset.login;
+  form.elements.account.value=button.dataset.account;
+  form.elements.enabled.checked=button.dataset.account!=='';
+  form.elements.account.disabled=!form.elements.enabled.checked;
+  form.querySelector('[role="alert"]').textContent='';
+  dialog.showModal();
+}
+function cfgSaveWindowsAccount(event,form){
+  event.preventDefault();
+  var fields=form.querySelector('fieldset');
+  fields.disabled=true;
+  cfgPost('users/windows-account',{id:form.dataset.userId,enabled:form.elements.enabled.checked,account:form.elements.account.value})
+    .then(function(){form.closest('dialog').close();cfgAdmin('users')})
+    .catch(function(e){form.querySelector('[role="alert"]').textContent=e.message})
+    .finally(function(){fields.disabled=false});
+}
 // cfgPost — POST в админку с честным разбором ответа. Ответ обработчика — JSON,
 // но при завершённой сессии до обработчика дело не доходит: middleware отдаёт
 // редирект на форму входа, fetch его проходит и приносит HTML. Раньше r.json()
@@ -495,6 +546,54 @@ func logCfgSessionAudit(r *http.Request, db *storage.DB, action, targetLogin, ta
 		actorID, actorLogin = u.ID, u.Login
 	}
 	db.LogAction(r.Context(), action, "", targetLogin, targetUserID, actorID, actorLogin, r.RemoteAddr)
+}
+
+func (h *handler) cfgAdminUserWindowsAccount(w http.ResponseWriter, r *http.Request) {
+	lang := resolveLang(r)
+	db := h.cfgDomainAdminDB(w, r)
+	if db == nil {
+		return
+	}
+	var req struct {
+		ID      string `json:"id"`
+		Enabled *bool  `json:"enabled"`
+		Account string `json:"account"`
+	}
+	if !decodeCfgDomainJSON(w, r, &req) {
+		return
+	}
+	if req.ID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": tr(lang, "id обязателен")})
+		return
+	}
+	if req.Enabled == nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": tr(lang, "Укажите, включена ли аутентификация Windows")})
+		return
+	}
+	account := ""
+	if *req.Enabled {
+		account = strings.TrimSpace(req.Account)
+		if account == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": tr(lang, "Введите учётную запись Windows")})
+			return
+		}
+	}
+	repo := auth.NewRepo(db)
+	user, err := repo.GetByID(r.Context(), req.ID)
+	if storage.IsNotFound(err) {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": tr(lang, "Пользователь не найден")})
+		return
+	}
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": errText(r, err)})
+		return
+	}
+	if err := repo.SetWindowsAccount(r.Context(), user.ID, account); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": errText(r, err)})
+		return
+	}
+	logCfgSessionAudit(r, db, "windows_binding_changed", user.Login, user.ID)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 func (h *handler) cfgAdminUserDenyPasswd(w http.ResponseWriter, r *http.Request) {
@@ -928,6 +1027,13 @@ func (h *handler) cfgAdminSettings(w http.ResponseWriter, r *http.Request) {
 	stored := repo.AuthPolicy(r.Context())
 	pwPolicy := repo.EffectivePasswordPolicy(r.Context())
 	lang := resolveLang(r)
+	domainSection, err := cfgDomainSettingsSection(r, b.ID, repo)
+	if err != nil {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(http.StatusInternalServerError)
+		httpErrorDiv(w, tr(lang, "Не удалось прочитать параметры доменного входа"), err)
+		return
+	}
 	jsText := func(s string) string {
 		s = strings.ReplaceAll(s, `\`, `\\`)
 		s = strings.ReplaceAll(s, `'`, `\'`)
@@ -1052,7 +1158,7 @@ function cfgSettingsSave(){
 	</div>
 </div>
 %s`, storage.MaxListPageSize, pageSize, storage.MaxListPageSize, navChecked, pagesSel, tabsSel, lockChecked, netChecked, execChecked,
-		passwordSection, settingsScript)
+		passwordSection+domainSection, settingsScript)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	writeBody(w, []byte(html))
 }

@@ -85,6 +85,7 @@ docs/*
 !docs/users-load-limits.md
 !docs/release-template.md
 !docs/DEPLOYMENT.md
+!docs/ubuntu-domain-login.md
 !docs/reverse-proxy.md
 !docs/release-signing.md
 !docs/self-update.md

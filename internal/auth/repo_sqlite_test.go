@@ -495,6 +495,42 @@ func TestSessionLimitOneKeepsConfigurator(t *testing.T) {
 	}
 }
 
+func TestCappedLoginKeepsNewTokenWithTiedTimestamps(t *testing.T) {
+	repo, db, ctx := newTestRepoDB(t)
+	if err := db.SaveMaxSessionsPerUser(ctx, 1); err != nil {
+		t.Fatal(err)
+	}
+	u, err := repo.Create(ctx, "tied", "password", "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Model a database clock on which both writes fall in the same tick.
+	if _, err := db.Exec(ctx, `CREATE TRIGGER fixed_session_clock AFTER INSERT ON _sessions BEGIN
+		UPDATE _sessions SET created_at='2026-01-01', last_seen_at='2026-01-01' WHERE token=NEW.token; END`); err != nil {
+		t.Fatal(err)
+	}
+	meta := auth.SessionMeta{Kind: auth.SessionKindEnterprise}
+	if _, err := repo.CreateSession(ctx, u.ID, meta); err != nil {
+		t.Fatal(err)
+	}
+	// The old digest sorts first under the former DESC token tiebreaker.
+	oldDigest := "sha256:" + strings.Repeat("f", 64)
+	if _, err := db.Exec(ctx, `UPDATE _sessions SET token=?, token_hash=?`, oldDigest, oldDigest); err != nil {
+		t.Fatal(err)
+	}
+	token, err := repo.CreateSession(ctx, u.ID, meta)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.LookupSessionKind(ctx, token, meta.Kind); err != nil {
+		t.Fatalf("newly issued session was evicted: %v", err)
+	}
+	count, err := repo.ActiveSessionCount(ctx)
+	if err != nil || count != 1 {
+		t.Fatalf("active sessions = %d, want 1 (error %v)", count, err)
+	}
+}
+
 // TouchSession обновляет last_seen_at не чаще раза в 5 минут (троттлинг).
 func TestTouchSessionThrottled(t *testing.T) {
 	repo, ctx := newTestRepo(t)
