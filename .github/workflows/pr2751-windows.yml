@@ -13,8 +13,8 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 45
     env:
-      SOURCE_SHA: 080b08e4130a4f3cf81a864e21a32a9abd0972f1
-      BUILD_VER: pr-2751-080b08e4
+      SOURCE_SHA: a788993017435a75669a7d3b0dee3fbb11789a55
+      GOARCH: amd64
       GOTOOLCHAIN: local
 
     steps:
@@ -38,6 +38,7 @@ jobs:
           cache-dependency-path: src/go.sum
 
       - name: Build binaries and collect their licenses
+        id: build
         working-directory: src
         shell: pwsh
         env:
@@ -51,6 +52,11 @@ jobs:
           if ((go env GOVERSION) -ne 'go1.26.11') {
             throw 'Expected Go 1.26.11.'
           }
+
+          $shortSha = $env:SOURCE_SHA.Substring(0, 8)
+          $env:BUILD_VER = "pr-2751-$shortSha"
+          "BUILD_VER=$env:BUILD_VER" >> $env:GITHUB_ENV
+          "short_sha=$shortSha" >> $env:GITHUB_OUTPUT
 
           $stage = Join-Path $env:RUNNER_TEMP 'onebase-package'
           New-Item -ItemType Directory -Path $stage | Out-Null
@@ -69,7 +75,9 @@ jobs:
           go run ./tools/licensebundle -release -out $licenses -version $env:BUILD_VER $cli $gui
           Get-ChildItem -LiteralPath $licenses -Force | Copy-Item -Destination $stage -Recurse
           $extras = Join-Path $env:GITHUB_WORKSPACE 'packaging/tools/pr2751-package'
-          Copy-Item -LiteralPath (Join-Path $extras 'Start.cmd'), (Join-Path $extras 'Как проверить.txt') -Destination $stage
+          Copy-Item -LiteralPath (Join-Path $extras 'Start.cmd') -Destination $stage
+          $guide = Get-Content -LiteralPath (Join-Path $extras 'Как проверить.txt') -Encoding utf8 -Raw
+          $guide.Replace('@SOURCE_SHA@', $env:SOURCE_SHA) | Set-Content -LiteralPath (Join-Path $stage 'Как проверить.txt') -Encoding utf8BOM -NoNewline
 
       - name: Check CLI and GUI versions
         shell: pwsh
@@ -90,7 +98,7 @@ jobs:
       - name: Upload the unpacked kit
         uses: actions/upload-artifact@v4
         with:
-          name: OneBase-PR-2751-Windows-x64-080b08e4
+          name: OneBase-PR-2751-Windows-x64-${{ steps.build.outputs.short_sha }}
           path: ${{ runner.temp }}/onebase-package/
           if-no-files-found: error
           retention-days: 90
