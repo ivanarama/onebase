@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
+
+	"github.com/shopspring/decimal"
 
 	"github.com/ivantit66/onebase/internal/metadata"
 )
@@ -151,7 +154,7 @@ func refKey(v any) string {
 		return wrapped.stringValue()
 	}
 	if ref, ok := v.(*Ref); ok {
-		return ref.UUID
+		return ref.GetRefUUID()
 	}
 	return fmt.Sprintf("%v", v)
 }
@@ -272,7 +275,7 @@ func (a *Array) Iterate() []any   { return a.items }
 func (a *Array) String() string   { return fmt.Sprintf("Массив[%d]", len(a.items)) }
 func (a *Array) TypeName() string { return "Массив" }
 
-func (m *Map) Keys() []any { return m.keys }
+func (m *Map) Keys() []any { m.compact(); return m.keys }
 func (m *Map) Get(key any) any {
 	if idx := m.findIdx(key); idx >= 0 {
 		return m.vals[idx]
@@ -429,33 +432,196 @@ func (s *Struct) CallMethod(name string, args []any) any {
 type Map struct {
 	keys []any
 	vals []any
+	// index — метка ключа → позиции в keys (см. mapKeyLabels). nil — построить
+	// заново при следующем поиске: Map создаётся и литералом с готовыми
+	// срезами (копия только для чтения, атрибуты XML).
+	index map[string][]int
+	// Изменяемые ключи сравниваются по текущему значению. Метка, вычисленная
+	// при вставке, могла бы устареть после изменения коллекции или объекта.
+	unindexed []int
+	// dead — сколько позиций keys занято удалёнными (mapTombstone): удаление
+	// не сдвигает срезы, чтобы оставаться O(1); порядок обхода сохраняется,
+	// уплотнение — по накоплении (compact) и перед обходом.
+	dead   int
+	cursor *mapCursor
 }
 
-func (m *Map) findIdx(key any) int {
-	for i, k := range m.keys {
-		if equal(k, key) {
-			return i
+type mapTombstoneT struct{}
+
+var mapTombstone any = mapTombstoneT{}
+
+func isMapTombstone(k any) bool { _, ok := k.(mapTombstoneT); return ok }
+
+// mapKeyLabels — метки, по которым ключ ищется в индексе. Совпадение по
+// equal() обязано давать общую метку: даты равны по моменту времени (t:),
+// числа — по значению decimal (n:), всё остальное и смешанные пары
+// (число и строка «5», дата и её строка) — по refKey (s:). Ссылка ещё
+// помечается наименованием (r:) для запасного сопоставления со строкой.
+// Метка лишь сужает перебор: окончательно ключи сравнивает equal(), как и
+// прежде при полном переборе.
+func mapKeyLabels(v any, withRefName bool) []string {
+	if IsUndefined(v) {
+		return []string{"u"}
+	}
+	labels := []string{"s:" + refKey(v)}
+	switch x := v.(type) {
+	case time.Time:
+		labels = append(labels, "t:"+x.UTC().Format(time.RFC3339Nano))
+	case *Ref:
+		if withRefName && x != nil {
+			labels = append(labels, "r:"+x.Name)
 		}
 	}
-	// Fallback: Ref.Name vs plain string (query auto-resolves references to names)
-	if ref, ok := key.(*Ref); ok {
-		for i, k := range m.keys {
-			if s, ok2 := k.(string); ok2 && s == ref.Name {
-				return i
+	if isNumeric(v) {
+		if d, ok := toDecimal(v); ok {
+			labels = append(labels, "n:"+d.String())
+		}
+	}
+	return labels
+}
+
+func (m *Map) ensureIndex() {
+	if m.index != nil {
+		return
+	}
+	m.index = make(map[string][]int, len(m.keys))
+	m.unindexed = m.unindexed[:0]
+	for i, k := range m.keys {
+		if !isMapTombstone(k) {
+			m.indexKey(i, k)
+		}
+	}
+}
+
+func canIndexMapKey(key any) bool {
+	switch key.(type) {
+	case nil, undefinedValue, string, bool, time.Time, UUIDValue, *Ref:
+		return true
+	case *decimal.Decimal:
+		return false
+	default:
+		return isNumeric(key)
+	}
+}
+
+func (m *Map) indexKey(pos int, key any) {
+	if !canIndexMapKey(key) {
+		m.unindexed = append(m.unindexed, pos)
+		return
+	}
+	for _, label := range mapKeyLabels(key, true) {
+		m.index[label] = append(m.index[label], pos)
+	}
+}
+
+// findIdx — позиция ключа или -1. Как прежний перебор: из равных по equal()
+// побеждает самый ранний по порядку вставки; если равного нет — запасное
+// сопоставление ссылки со строкой по наименованию (запрос отдаёт ссылки
+// наименованиями).
+func (m *Map) findIdx(key any) int {
+	m.ensureIndex()
+	best := -1
+	consider := func(pos int) {
+		if best >= 0 && pos >= best {
+			return
+		}
+		k := m.keys[pos]
+		if !isMapTombstone(k) && equal(k, key) {
+			best = pos
+		}
+	}
+	for _, label := range mapKeyLabels(key, false) {
+		for _, pos := range m.index[label] {
+			consider(pos)
+		}
+	}
+	for _, pos := range m.unindexed {
+		if best >= 0 && pos >= best {
+			break
+		}
+		consider(pos)
+	}
+	if best >= 0 {
+		return best
+	}
+	switch q := key.(type) {
+	case *Ref:
+		if q != nil {
+			for _, pos := range m.index["s:"+q.Name] {
+				if s, ok := m.keys[pos].(string); ok && s == q.Name {
+					return pos
+				}
 			}
 		}
-	}
-	if s, ok := key.(string); ok {
-		for i, k := range m.keys {
-			if ref, ok2 := k.(*Ref); ok2 && ref.Name == s {
-				return i
+	case string:
+		for _, pos := range m.index["r:"+q] {
+			if ref, ok := m.keys[pos].(*Ref); ok && ref != nil && ref.Name == q {
+				return pos
 			}
 		}
 	}
 	return -1
 }
 
-func (m *Map) String() string   { return fmt.Sprintf("Соответствие[%d]", len(m.keys)) }
+// count — число живых ключей.
+func (m *Map) count() int { return len(m.keys) - m.dead }
+
+// compact убирает удалённые позиции. Обходы (Для Каждого, JSON, шаблоны,
+// копия только для чтения) зовут его перед чтением keys/vals напрямую.
+func (m *Map) compact() {
+	if m.dead == 0 {
+		return
+	}
+	keys := make([]any, 0, len(m.keys)-m.dead)
+	vals := make([]any, 0, len(m.keys)-m.dead)
+	for i, k := range m.keys {
+		if !isMapTombstone(k) {
+			keys = append(keys, k)
+			vals = append(vals, m.vals[i])
+		}
+	}
+	// Пересчитываем границы активных обходов по порядку живых позиций.
+	for c := m.cursor; c != nil; c = c.parent {
+		next, end := 0, 0
+		for pos, key := range m.keys[:c.end] {
+			if !isMapTombstone(key) {
+				end++
+				if pos < c.next {
+					next++
+				}
+			}
+		}
+		c.next, c.end = next, end
+	}
+	m.keys, m.vals, m.dead, m.index, m.unindexed = keys, vals, 0, nil, nil
+}
+
+type mapCursor struct {
+	next   int
+	end    int
+	parent *mapCursor
+}
+
+// iterate запоминает границу вставок, но берёт значение очередного элемента
+// непосредственно перед его выдачей. Удалённые позиции пропускаются.
+func (m *Map) iterate(yield func(KeyValue) bool) {
+	cursor := mapCursor{end: len(m.keys), parent: m.cursor}
+	m.cursor = &cursor
+	defer func() { m.cursor = cursor.parent }()
+	for cursor.next < cursor.end {
+		pos := cursor.next
+		cursor.next++
+		key := m.keys[pos]
+		if isMapTombstone(key) {
+			continue
+		}
+		if !yield(KeyValue{Key: key, Value: m.vals[pos]}) {
+			return
+		}
+	}
+}
+
+func (m *Map) String() string   { return fmt.Sprintf("Соответствие[%d]", m.count()) }
 func (m *Map) TypeName() string { return "Соответствие" }
 
 func (m *Map) CallMethod(name string, args []any) any {
@@ -472,6 +638,7 @@ func (m *Map) CallMethod(name string, args []any) any {
 			} else {
 				m.keys = append(m.keys, key)
 				m.vals = append(m.vals, val)
+				m.indexKey(len(m.keys)-1, key)
 			}
 		}
 	case "получить", "get":
@@ -485,15 +652,20 @@ func (m *Map) CallMethod(name string, args []any) any {
 	case "удалить", "delete":
 		if len(args) >= 1 {
 			if idx := m.findIdx(args[0]); idx >= 0 {
-				m.keys = append(m.keys[:idx], m.keys[idx+1:]...)
-				m.vals = append(m.vals[:idx], m.vals[idx+1:]...)
+				m.keys[idx], m.vals[idx] = mapTombstone, nil
+				m.dead++
+				if m.dead > 32 && m.dead*2 > len(m.keys) {
+					m.compact()
+				}
 			}
 		}
 	case "количество", "count":
-		return float64(len(m.keys))
+		return float64(m.count())
 	case "очистить", "clear":
-		m.keys = nil
-		m.vals = nil
+		m.keys, m.vals, m.index, m.unindexed, m.dead = nil, nil, nil, nil, 0
+		for c := m.cursor; c != nil; c = c.parent {
+			c.next, c.end = 0, 0
+		}
 	default:
 		unknownMethod("Соответствие", name, mapMethods)
 	}

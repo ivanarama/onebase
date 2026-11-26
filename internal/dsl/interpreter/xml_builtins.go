@@ -739,6 +739,9 @@ func (w *xmlWriter) writeValue(name string, v any, depth int) error {
 			return fmt.Errorf("соответствие повреждено: число ключей и значений различается")
 		}
 		for i, k := range x.keys {
+			if isMapTombstone(k) {
+				continue
+			}
 			key, ok := k.(string)
 			if !ok {
 				return fmt.Errorf("имя элемента из ключа Соответствия должно быть строкой, получено %T", k)
@@ -946,6 +949,7 @@ func asXMLTreeNode(v any, depth int, budget *xmlTreeBudget) (*xmlNode, bool, err
 		if !ok || attrs == nil {
 			return nil, true, fmt.Errorf("поле «%s» узла XML должно быть Соответствием", xmlFieldAttrs)
 		}
+		attrs.compact()
 		if len(attrs.keys) != len(attrs.vals) {
 			return nil, true, fmt.Errorf("поле «%s» узла XML повреждено", xmlFieldAttrs)
 		}

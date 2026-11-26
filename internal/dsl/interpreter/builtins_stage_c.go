@@ -66,6 +66,7 @@ func sourceFields(src any) (names []string, get func(string) any) {
 	case *Struct:
 		return s.Fields(), s.Get
 	case *Map:
+		s.compact()
 		ns := make([]string, 0, len(s.keys))
 		for _, k := range s.keys {
 			ns = append(ns, fmt.Sprintf("%v", k))

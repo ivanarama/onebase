@@ -463,8 +463,8 @@ func (i *Interpreter) execStmt(s ast.Stmt, e *env) {
 				}
 			}
 		case *Map:
-			for idx, key := range items.keys {
-				e.setLocal(v.Var.Literal, &KeyValue{Key: key, Value: items.vals[idx]})
+			for pair := range items.iterate {
+				e.setLocal(v.Var.Literal, &pair)
 				if !i.execLoopBody(v.Body, e) {
 					break
 				}
