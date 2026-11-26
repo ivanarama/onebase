@@ -7229,6 +7229,7 @@ func scalarFuncRewrites(dialect string) map[string]funcRewrite {
 	switch dialect {
 	case "sqlite":
 		m["нрег"] = rw("ob_lower(", ")")
+		m["врег"] = rw("ob_upper(", ")")
 		// Цел — усечение к нулю (как decimal.Truncate(0) в DSL). В SQLite
 		// CAST(x AS INTEGER) усекает к нулю.
 		m["цел"] = rw("CAST(", " AS INTEGER)")
@@ -7249,6 +7250,7 @@ func scalarFuncRewrites(dialect string) map[string]funcRewrite {
 		m["day"] = rw("CAST(strftime('%d',", ") AS INTEGER)")
 	default: // pg
 		m["нрег"] = rw("LOWER(", ")")
+		m["врег"] = rw("UPPER(", ")")
 		// Цел — усечение к нулю. В PG CAST(x AS INTEGER) округлял бы (half-even),
 		// поэтому берём TRUNC, которое усекает к нулю.
 		m["цел"] = rw("TRUNC(", ")")

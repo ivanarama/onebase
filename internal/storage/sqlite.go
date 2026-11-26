@@ -18,11 +18,20 @@ import (
 	sqlite "modernc.org/sqlite"
 )
 
-// init регистрирует Unicode-aware функцию ob_lower для SQLite. Встроенная
-// SQLite LOWER() приводит к нижнему регистру только ASCII, поэтому отборы и
-// поиск по кириллице получались регистрозависимыми. ob_lower использует
-// strings.ToLower (полная таблица Unicode) и применяется в LowerLike SQLite-
-// диалекта. Регистрация глобальна и действует на все коннекты, открытые позже.
+// SQLite's built-in case conversion only handles ASCII.
+func registerSQLiteCaseFunction(name string, convert func(string) string) {
+	sqlite.MustRegisterDeterministicScalarFunction(name, 1, func(_ *sqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
+		switch v := args[0].(type) {
+		case string:
+			return convert(v), nil
+		case []byte:
+			return convert(string(v)), nil
+		default:
+			return v, nil
+		}
+	})
+}
+
 func init() {
 	// Регистры допускают старые RFC3339-строки и штатную привязку time.Time.
 	// Общий UTC-ключ нужен только для их сравнений с параметром-моментом.
@@ -58,19 +67,8 @@ func init() {
 		}
 		return revision.String(), nil
 	})
-	sqlite.MustRegisterDeterministicScalarFunction("ob_lower", 1, func(_ *sqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
-		if len(args) != 1 || args[0] == nil {
-			return nil, nil
-		}
-		switch v := args[0].(type) {
-		case string:
-			return strings.ToLower(v), nil
-		case []byte:
-			return strings.ToLower(string(v)), nil
-		default:
-			return v, nil
-		}
-	})
+	registerSQLiteCaseFunction("ob_lower", strings.ToLower)
+	registerSQLiteCaseFunction("ob_upper", strings.ToUpper)
 	// date хранится в SQLite как UTC с явным offset. Календарные функции
 	// прикладного запроса должны сначала увидеть те же локальные стенные часы,
 	// что DSL/UI. Функция намеренно не deterministic: time.Local — настройка
