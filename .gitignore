@@ -91,6 +91,7 @@ docs/*
 !docs/commercial-use.md
 !docs/licensing-confirmation-template.md
 !docs/maintenance-pipeline.md
+!docs/agent-roles.md
 !docs/ci-evidence.md
 !docs/long-identifiers.md
 # Каталоги, а не файлы по одному: `docs/*` исключает и сам каталог, а в
