@@ -1,6 +1,8 @@
 package incident
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"runtime/debug"
@@ -33,8 +35,17 @@ func Recoverer(s *Store, userOf UserFunc) func(http.Handler) http.Handler {
 				if rec == http.ErrAbortHandler {
 					panic(rec)
 				}
-				stack := string(debug.Stack())
 				text := fmt.Sprintf("%v", rec)
+				cause, _ := rec.(error)
+				if errors.Is(r.Context().Err(), context.Canceled) && errors.Is(cause, context.Canceled) {
+					// Обе ошибки подтверждают отмену операции запроса.
+					// Таймауты и независимые паники остаются инцидентами.
+					oblog.Component("http").Info("запрос прерван клиентом",
+						"where", WhereOf(r), "reason", text)
+					w.WriteHeader(StatusClientClosedRequest)
+					return
+				}
+				stack := string(debug.Stack())
 				var id string
 				if s != nil {
 					user := ""
@@ -57,6 +68,9 @@ func Recoverer(s *Store, userOf UserFunc) func(http.Handler) http.Handler {
 		})
 	}
 }
+
+// StatusClientClosedRequest — 499 nginx: клиент закрыл соединение до ответа.
+const StatusClientClosedRequest = 499
 
 // Message — то, что видит пользователь вместо страницы. Код инцидента идёт
 // последним и отдельным предложением, чтобы его было видно и в узком тосте, и

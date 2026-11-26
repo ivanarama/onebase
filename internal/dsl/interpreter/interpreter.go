@@ -39,6 +39,9 @@ type userError struct {
 	Err             error // исходная ошибка (например i18nerr) для локализации по цепочке
 }
 
+func (u userError) Error() string { return u.Msg }
+func (u userError) Unwrap() error { return u.Err }
+
 // asDSLError сохраняет место возбуждения даже после вложенного вызова или
 // повторного возбуждения. Для ошибок внешних методов без позиции остаётся
 // прежний fallback на текущий оператор исполнения.
