@@ -44,6 +44,13 @@ func TestDocumentAndRegisterDateColumns(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, rows, tc.count, tc.predicate)
 		}
+		// Both matches and mismatches survive DISTINCT when the comparison is projected.
+		compiled, err := query.Compile("ВЫБРАТЬ РАЗЛИЧНЫЕ Д.Срок = Р.Срок КАК Совпали ИЗ Документ.Док КАК Д СОЕДИНЕНИЕ РегистрСведений.Сроки КАК Р ПО 1 = 1", opts)
+		require.NoError(t, err)
+		rows, _, err := query.Run(ctx, db, &compiled)
+		require.NoError(t, err)
+		require.Len(t, rows, 2)
+
 		// Dates inside a larger expression and string fields are not date operands.
 		for _, predicate := range []string{"Д.Срок = Р.Срок + 1", "Д.Метка = Р.Срок", "Р.Срок = Д.Метка"} {
 			compiled, err := query.Compile(from+predicate, opts)

@@ -65,8 +65,8 @@ func (tr *translator) dateComparisonOperand(op, step int) (int, sourceClass) {
 	case tIdent:
 		kw, _ := sqlKW(tr.tokens[i].val)
 		switch kw {
-		case "SELECT", "WHERE", "HAVING", "ON", "NOT", "AND", "OR", "WHEN", "THEN", "ELSE", "END",
-			"AS", "FROM", "GROUP", "ORDER", "LIMIT", "UNION", "INNER", "LEFT", "RIGHT", "FULL", "CROSS", "JOIN":
+		case "SELECT", "ALL", "DISTINCT", "WHERE", "HAVING", "ON", "NOT", "AND", "OR", "WHEN", "THEN", "ELSE", "END",
+			"AS", "FROM", "GROUP", "ORDER", "BY", "ASC", "DESC", "LIMIT", "UNION", "INNER", "LEFT", "RIGHT", "FULL", "CROSS", "JOIN":
 		default:
 			return -1, sourceClassUnknown
 		}
