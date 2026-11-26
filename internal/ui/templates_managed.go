@@ -165,6 +165,10 @@ const tplManagedForm = `
           </div>
           {{end}}
         </div>
+      {{else if and (eq (str $el.Type) "file") $ctx.IsProcessor (processorBinaryParam $ctx.Processor $fn)}}
+        {{/* Параметр обработки type: binary — настоящее поле файла (см. ветку ниже). */}}
+        {{$bp := processorBinaryParam $ctx.Processor $fn}}
+        <input class="managed-fill-control" type="file" name="{{$fn}}" data-ob-binary-file="{{$el.Name}}"{{if $bp.Multiple}} multiple{{end}}{{if and $req (not $ro)}} required{{end}}{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $ro}} disabled{{end}}{{if and $roUnlockable $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>
       {{else if eq (str $el.Type) "file"}}
         <div class="managed-control-row" style="display:flex;gap:6px;align-items:center">
           <input class="managed-fill-control" type="text" name="{{$fn}}" id="file-path-{{$el.Name}}" placeholder="Путь к файлу или выберите …" style="flex:1"{{if and $req (not $ro)}} required{{end}}{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $ro}} readonly{{end}}>
@@ -179,6 +183,13 @@ const tplManagedForm = `
       {{else}}
         <input type="text" autocomplete="{{inputAutocomplete $el}}" name="{{$fn}}" value="{{index $ctx.Values $fn}}"{{if and $ctx.ProtectedFields (index $ctx.ProtectedFields $fn)}} data-ob-protected{{end}}{{if and $req (not $ro)}} required{{end}}{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $ro}} readonly{{end}}{{if $el.Mask}} pattern="{{$el.Mask}}" data-ob-form-mask{{end}}{{if gt $el.DeadlineWarn 0}} data-ob-deadline="{{$el.DeadlineWarn}}"{{end}}{{if $el.Conceal}} disabled data-ob-concealed{{end}}{{if $el.InputMask}} data-ob-input-mask="{{$el.InputMask}}" placeholder="{{inputMaskHint $el.InputMask}}"{{if inputMaskDigitsOnly $el.InputMask}} inputmode="numeric"{{end}}{{end}}{{if $el.Hint}} title="{{$el.Hint}}"{{end}}{{if and $roUnlockable $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>
       {{end}}
+    {{else if and (eq (str $el.Type) "file") $ctx.IsProcessor (processorBinaryParam $ctx.Processor $fn)}}
+      {{/* Параметр обработки type: binary — настоящее поле файла: байты уходят
+           multipart-ом и при «Выполнить», и в событии формы (obFire). Путь и
+           содержимое через скрытое текстовое поле здесь не годятся — двоичный
+           файл в тексте портится. multiple: true — пачка файлов. */}}
+      {{$bp := processorBinaryParam $ctx.Processor $fn}}
+      <input class="managed-fill-control" type="file" name="{{$fn}}" data-ob-binary-file="{{$el.Name}}"{{if $bp.Multiple}} multiple{{end}}{{if and $req (not $ro)}} required{{end}}{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $ro}} disabled{{end}}{{if and $roUnlockable $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>
     {{else if eq (str $el.Type) "file"}}
       {{/* Поле не найдено в Entity, но элемент объявлен как file */}}
       <div class="managed-control-row" style="display:flex;gap:6px;align-items:center">
