@@ -276,7 +276,7 @@ const tplManagedForm = `
        контракта раскладки (#1185), и менять смысл ключей значило бы перестроить
        уже написанные формы. Общим остаётся выравнивание: блок-обёртка нужна
        затем, что auto-margin на инлайновой картинке не работает. */}}
-  <div class="form-picture"{{with elAlign $el}} style="{{.}}"{{end}}>
+  <div class="form-picture"{{with elAlign $el}} style="{{.}}"{{end}}{{if and $el.DataPath (not $el.Picture)}} data-ob-el="{{$el.Name}}"{{with elPath $ctx $el}} data-ob-el-path="{{.}}"{{end}}{{end}}>
   {{if $el.Picture}}
     {{$pictureWidth := elPictureSize $el.Width}}{{$pictureHeight := elPictureSize $el.Height}}
     <img src="/static/forms/{{$el.Picture}}" alt="{{$el.Name}}" data-ob-el="{{$el.Name}}"{{with elPath $ctx $el}} data-ob-el-path="{{.}}"{{end}} style="max-width:{{if $pictureWidth}}{{$pictureWidth}}px{{else}}100px{{end}};max-height:{{if $pictureHeight}}{{$pictureHeight}}px{{else}}100px{{end}}">
@@ -292,7 +292,7 @@ const tplManagedForm = `
     {{$pictureWidth := elPictureSize $el.Width}}{{$pictureHeight := elPictureSize $el.Height}}
     <input type="hidden"{{if not (formFieldHasEditor $ctx.Form $fn)}} name="{{$fn}}"{{end}} value="{{$raw}}" data-ob-picture-for="{{$el.Name}}" data-ob-picture-field="{{$fn}}">
     <a data-ob-picture-link="{{$el.Name}}" href="{{if $aid}}/ui/attachments/{{$aid}}/download{{end}}" target="_blank" rel="noopener" title="{{t $ctx.Lang "Открыть в полном размере"}}"{{if not $aid}} hidden{{end}}>
-      <img src="{{if $aid}}/ui/attachments/{{$aid}}/download{{end}}" alt="{{$el.Name}}" data-ob-el="{{$el.Name}}"{{with elPath $ctx $el}} data-ob-el-path="{{.}}"{{end}} style="max-width:{{if $pictureWidth}}{{$pictureWidth}}px{{else}}100px{{end}};max-height:{{if $pictureHeight}}{{$pictureHeight}}px{{else}}100px{{end}}">
+      <img src="{{if $aid}}/ui/attachments/{{$aid}}/download{{end}}" alt="{{$el.Name}}" style="max-width:{{if $pictureWidth}}{{$pictureWidth}}px{{else}}100px{{end}};max-height:{{if $pictureHeight}}{{$pictureHeight}}px{{else}}100px{{end}}">
     </a>
     <span data-ob-picture-empty="{{$el.Name}}" style="color:#94a3b8"{{if $aid}} hidden{{end}}>{{t $ctx.Lang "Нет изображения"}}</span>
   {{else}}

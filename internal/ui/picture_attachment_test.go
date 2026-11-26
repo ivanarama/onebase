@@ -90,6 +90,22 @@ func TestManagedFormPictureFieldShowsAttachment(t *testing.T) {
 			}
 		}
 	})
+
+	t.Run("условие видимости охватывает ссылку и подпись пустого превью", func(t *testing.T) {
+		ent.Forms[0].Elements[0].HiddenWhen = "Ложь"
+		anchor := managedElementAnchor(t, open(t, ""), "ПолеФото")
+		if path, _ := managedHTMLAttr(anchor, "data-ob-el-path"); path == "" {
+			t.Fatal("у превью нет пути для обновления видимости")
+		}
+		for _, attr := range []string{"data-ob-picture-link", "data-ob-picture-empty"} {
+			if keyboardFindHTML(anchor, func(node *html.Node) bool {
+				name, _ := managedHTMLAttr(node, attr)
+				return name == "ПолеФото"
+			}) == nil {
+				t.Errorf("%s вне области действия hidden_when", attr)
+			}
+		}
+	})
 }
 
 // pictureFormControls — то, что отправит браузер: именованные контролы формы
