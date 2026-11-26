@@ -28,7 +28,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"regexp"
@@ -225,8 +224,8 @@ func main() {
 		os.Exit(2)
 	}
 
-	warnIfLimited(os.Stdout, "открытых заявок", *issuesPath, len(issues), *limit)
-	warnIfLimited(os.Stdout, "влитых PR", *prsPath, len(prs), *limit)
+	fmt.Print(limitWarning("открытых заявок", *issuesPath, len(issues), *limit))
+	fmt.Print(limitWarning("влитых PR", *prsPath, len(prs), *limit))
 	declared, mentioned := analyze(issues, prs)
 
 	if len(declared) == 0 {
@@ -251,10 +250,11 @@ func main() {
 	}
 }
 
-func warnIfLimited(w io.Writer, kind, path string, count, limit int) {
+func limitWarning(kind, path string, count, limit int) string {
 	if path == "" && count >= limit {
-		fmt.Fprintf(w, "внимание: достигнут -limit (%d) для %s, часть могла не попасть в отчёт\n", limit, kind)
+		return fmt.Sprintf("внимание: достигнут -limit (%d) для %s, часть могла не попасть в отчёт\n", limit, kind)
 	}
+	return ""
 }
 
 // reason объясняет, почему заявка осталась открытой: русская фраза GitHub'у

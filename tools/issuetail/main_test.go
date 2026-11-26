@@ -1,9 +1,6 @@
 package main
 
-import (
-	"strings"
-	"testing"
-)
+import "testing"
 
 func TestLimitWarning(t *testing.T) {
 	for _, tc := range []struct {
@@ -17,10 +14,9 @@ func TestLimitWarning(t *testing.T) {
 		{"файл без ограничения", "issues.json", 244, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			var output strings.Builder
-			warnIfLimited(&output, "открытых заявок", tc.path, tc.count, 200)
-			if (output.Len() > 0) != tc.want {
-				t.Errorf("предупреждение = %q, ожидалось наличие: %t", output.String(), tc.want)
+			output := limitWarning("открытых заявок", tc.path, tc.count, 200)
+			if (output != "") != tc.want {
+				t.Errorf("предупреждение = %q, ожидалось наличие: %t", output, tc.want)
 			}
 		})
 	}
