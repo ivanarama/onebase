@@ -188,6 +188,32 @@ detail_panel:
 	}
 }
 
+func TestRunFullLintListProcessors(t *testing.T) {
+	dir := t.TempDir()
+	mkFile(t, filepath.Join(dir, "forms", "заказ", "списка.form.yaml"), `schema: onebase.form/v1
+form:
+  name: ФормаСписка
+  kind: list
+  entity: Заказ
+  list_processors:
+    - name: Выгрузка
+      title: {ru: Выгрузить, en: Export}
+      titel: Export
+list_processors: []
+`)
+	result := RunFullWithOptions(dir, Options{Lint: true})
+	var unknown []string
+	for _, w := range result.Warnings {
+		if w.Code == "metadata.unvalidated-key" {
+			unknown = append(unknown, w.Message)
+		}
+	}
+	got := strings.Join(unknown, "\n")
+	if len(unknown) != 2 || !strings.Contains(got, `"form.list_processors[].titel"`) || !strings.Contains(got, `"list_processors"`) {
+		t.Fatalf("линт должен отметить опечатку и ключ в корне формы: %v", unknown)
+	}
+}
+
 func TestLintProject_ListFormFieldWithoutIndex(t *testing.T) {
 	dir := t.TempDir()
 	mkFile(t, filepath.Join(dir, "catalogs", "товар.yaml"), `name: Товар

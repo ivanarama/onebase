@@ -9,12 +9,7 @@ import (
 	"github.com/ivantit66/onebase/internal/project"
 )
 
-// CheckFormBackground предупреждает о фоне элемента, который рантайм не
-// применит. Ключ background читают ГруппаФормы (#1547) и Кнопка, значение
-// обязано проходить csssafe.Color. Класс тот же, что у раскладки (#1185):
-// ключ принимался без диагностики — значит, расхождение обязан называть
-// check, а не наблюдение «почему-то не позеленело».
-
+// CheckFormBackground проверяет фон элементов и размещение оформления подписей и закладок.
 func CheckFormBackground(proj *project.Project) []Issue {
 	if proj == nil {
 		return nil
@@ -26,6 +21,24 @@ func CheckFormBackground(proj *project.Project) []Issue {
 			return
 		}
 		walkFormElements(form.Elements, func(el *metadata.FormElement) {
+			for _, style := range []struct {
+				key  string
+				set  bool
+				kind metadata.FormElementType
+			}{
+				{"label_color", strings.TrimSpace(el.LabelColor) != "", metadata.FormElementField},
+				{"title_color", strings.TrimSpace(el.TitleColor) != "", metadata.FormElementPage},
+				{"title_bold", el.TitleBold, metadata.FormElementPage},
+				{"tab_titles_bold", el.TabTitlesBold, metadata.FormElementPages},
+			} {
+				if style.set && el.Kind != style.kind {
+					warns = append(warns, Issue{
+						File: label, Object: object, Kind: "Управляемая форма", Code: "form.style-kind",
+						Message:      fmt.Sprintf("элемент %q: ключ %s игнорируется у %s", formElementName(el), style.key, el.Kind),
+						SuggestedFix: fmt.Sprintf("Перенесите ключ на элемент вида %s или удалите его.", style.kind),
+					})
+				}
+			}
 			for _, hk := range []struct{ key, value string }{
 				{"header_background", el.HeaderBackground},
 				{"header_border_color", el.HeaderBorderColor},
