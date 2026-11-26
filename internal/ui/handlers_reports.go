@@ -526,6 +526,13 @@ func applyResolvedLabels(rows []map[string]any, uuidToLabel map[string]string, s
 	for _, row := range rows {
 		for col, v := range row {
 			if skipCol != "" && strings.EqualFold(col, skipCol) {
+				// UUID остаётся для ссылки, а представление кладём рядом: то же
+				// поле может быть и колонкой detail_fields, где нужен текст.
+				if str, ok := v.(string); ok {
+					if label, found := uuidToLabel[str]; found && label != "" {
+						row[reportDetailLinkLabelKey] = label
+					}
+				}
 				continue
 			}
 			if str, ok := v.(string); ok {

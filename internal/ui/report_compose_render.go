@@ -6,8 +6,10 @@ import (
 	"html/template"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/ivantit66/onebase/internal/csssafe"
+	"github.com/ivantit66/onebase/internal/query"
 	"github.com/ivantit66/onebase/internal/report"
 	"github.com/ivantit66/onebase/internal/report/compose"
 	"github.com/ivantit66/onebase/internal/widget"
@@ -25,6 +27,9 @@ func renderComposedTable(res *compose.Result, spec *report.Composition) template
 	}
 	b.WriteString(`>`)
 	b.WriteString(`<thead><tr><th>` + html.EscapeString(strings.Join(spec.Groupings, " / ")) + `</th>`)
+	for _, d := range spec.DetailFields {
+		b.WriteString(`<th class="detail-field">` + html.EscapeString(detailFieldTitle(d)) + `</th>`)
+	}
 	for _, m := range spec.Measures {
 		b.WriteString(`<th class="num" style="` + html.EscapeString(measureAlign(m)) + `">` + html.EscapeString(measureTitle(m)) + `</th>`)
 	}
@@ -86,6 +91,23 @@ func (h *htmlComposeSink) groupMarker(level int) string {
 // оформление по styles[поле]. Общий код для строк группы, подытога и детали
 // (раньше один и тот же цикл был скопирован трижды).
 func (h *htmlComposeSink) measureCells(vals map[string]any, styles map[string]report.CellStyle) {
+	h.detailFieldCells(nil, nil)
+	h.measureOnlyCells(vals, styles)
+}
+
+// detailFieldCells — ячейки полей детальной записи. Строки групп и итогов
+// передают nil: колонки есть, значений в них нет.
+func (h *htmlComposeSink) detailFieldCells(vals map[string]any, styles map[string]report.CellStyle) {
+	for _, d := range h.spec.DetailFields {
+		v := ""
+		if vals != nil {
+			v = fmtDetailVal(detailFieldValue(h.spec, vals, d.Field))
+		}
+		h.b.WriteString(`<td class="detail-field" style="` + html.EscapeString(cssOf(styles[d.Field])) + `">` + html.EscapeString(v) + `</td>`)
+	}
+}
+
+func (h *htmlComposeSink) measureOnlyCells(vals map[string]any, styles map[string]report.CellStyle) {
 	for _, m := range h.spec.Measures {
 		cell := joinStyles(measureAlign(m), cssOf(styles[m.Field]))
 		h.b.WriteString(`<td class="num" style="` + html.EscapeString(cell) + `">` + html.EscapeString(fmtMeasure(vals[m.Field], m)) + `</td>`)
@@ -118,7 +140,8 @@ func (h *htmlComposeSink) detail(d compose.DetailRow, level int, path string) {
 	if !linked {
 		fmt.Fprintf(h.b, `<td style="padding-left:%dpx"></td>`, 8+level*18)
 	}
-	h.measureCells(d.Values, d.Styles)
+	h.detailFieldCells(d.Values, d.Styles)
+	h.measureOnlyCells(d.Values, d.Styles)
 	h.b.WriteString(`</tr>`)
 }
 
@@ -292,6 +315,68 @@ func composeFloat(v any) float64 {
 		return f
 	}
 	return 0
+}
+
+// reportDetailLinkLabelKey — служебный ключ строки отчёта с представлением
+// ссылки из колонки detail_link: сама колонка хранит UUID для перехода «→».
+const reportDetailLinkLabelKey = "_ob_detail_link_label"
+
+// detailFieldValue — значение поля детальной записи. Поле, которое служит и
+// detail_link, показывается представлением ссылки, а не её UUID.
+func detailFieldValue(spec *report.Composition, vals map[string]any, field string) any {
+	if spec != nil && spec.DetailLink != "" && strings.EqualFold(field, spec.DetailLink) {
+		if label, ok := vals[reportDetailLinkLabelKey]; ok {
+			return label
+		}
+	}
+	return vals[field]
+}
+
+// detailFieldTitle — заголовок колонки детальной записи (пустой = имя поля).
+func detailFieldTitle(d report.DetailField) string {
+	if d.Title != "" {
+		return d.Title
+	}
+	return d.Field
+}
+
+// fmtDetailVal — значение поля детальной записи: дата — по-русски в местном
+// времени приложения (время, только если оно есть), остальное — как fmtVal.
+// Момент приходит и time.Time (в зоне драйвера: SQLite — UTC), и строкой
+// (колонка запроса без типа, «2026-11-20T09:00:00Z»): обе формы — одна дата.
+func fmtDetailVal(v any) string {
+	t, ok := detailMoment(v)
+	if !ok {
+		return fmtVal(v)
+	}
+	if t.IsZero() {
+		return ""
+	}
+	t = t.In(time.Local)
+	if t.Hour() == 0 && t.Minute() == 0 && t.Second() == 0 {
+		return t.Format("02.01.2006")
+	}
+	return t.Format("02.01.2006 15:04:05")
+}
+
+// detailMoment распознаёт момент: time.Time или строку, начинающуюся с
+// ГГГГ-ММ-ДД и разбираемую как момент. Прочие строки остаются текстом.
+func detailMoment(v any) (time.Time, bool) {
+	switch x := v.(type) {
+	case time.Time:
+		return x, true
+	case string:
+		if len(x) < 10 || x[4] != '-' || x[7] != '-' {
+			return time.Time{}, false
+		}
+		for _, i := range []int{0, 1, 2, 3, 5, 6, 8, 9} {
+			if x[i] < '0' || x[i] > '9' {
+				return time.Time{}, false
+			}
+		}
+		return query.ToDateValue(x)
+	}
+	return time.Time{}, false
 }
 
 func fmtVal(v any) string {
