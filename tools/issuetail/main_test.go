@@ -1,6 +1,30 @@
 package main
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
+
+func TestLimitWarning(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		path  string
+		count int
+		want  bool
+	}{
+		{"полная страница", "", 200, true},
+		{"неполная страница", "", 199, false},
+		{"файл без ограничения", "issues.json", 244, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var output strings.Builder
+			warnIfLimited(&output, "открытых заявок", tc.path, tc.count, 200)
+			if (output.Len() > 0) != tc.want {
+				t.Errorf("предупреждение = %q, ожидалось наличие: %t", output.String(), tc.want)
+			}
+		})
+	}
+}
 
 // Заявки-образцы: одна «забытая» русским словом, одна закрытая по-английски,
 // одна сводная (её упоминают все подряд, и это норма).
