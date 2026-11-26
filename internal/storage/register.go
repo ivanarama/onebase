@@ -438,9 +438,10 @@ func (db *DB) writeMovementsInTx(ctx context.Context, regName, recorderType stri
 		for _, f := range allFields {
 			cols = append(cols, metadata.ColumnName(f))
 			phs = append(phs, d.Placeholder(idx))
-			v := ciGet(row, f.Name)
-			var err error
-			v, err = normalizeRegField(d, f, v)
+			v, err := regWriteRefValue(ctx, f, ciGet(row, f.Name))
+			if err == nil {
+				v, err = normalizeRegField(d, f, v)
+			}
 			if err != nil {
 				return fmt.Errorf("write movement %s row %d field %s: %w", regName, i+1, f.Name, err)
 			}
