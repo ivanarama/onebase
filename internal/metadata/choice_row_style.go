@@ -3,6 +3,7 @@ package metadata
 import (
 	"fmt"
 	"strings"
+	"unicode"
 
 	"github.com/ivantit66/onebase/internal/csssafe"
 )
@@ -31,6 +32,27 @@ import (
 // `conditional` формы (имя булева реквизита — тоже условие). Подходят все
 // правила, чьё условие истинно; их стили складываются по порядку. Цвета
 // проходят csssafe.Color.
+//
+// Ещё условия и источники оформления. В правиле нужно хотя бы одно условие
+// (when, when_param или when_in_folder) и хотя бы одно оформление:
+//
+//	rules:
+//	  - when_param: ПодкрашиватьФон        # флаг формы, где выбирают (choice_style_params поля)
+//	    background_from: ЦветФона.Цвет     # цвет из реквизита элемента (через ссылку)
+//	  - when_param: ПодкрашиватьТекст
+//	    color_from: ЦветТекстаВСписке.Цвет
+//	  - when_in_folder: Архивные           # элемент лежит в группе (на любой глубине)
+//	    color: OrangeRed
+//	    disabled: true                     # строка видна, но не выбирается
+//
+// when_param — правило действует, только если поле формы передало этот флаг
+// истинным (ключ поля `choice_style_params: {Имя: Объект.Направление.Флаг}`);
+// без флага правило не действует. when_in_folder — предопределённая группа
+// справочника, а если такой нет — группа с этим наименованием (группы,
+// пришедшие из 1С данными, предопределёнными здесь не объявлены).
+// color_from / background_from — путь
+// «Реквизит» или «Ссылка.Реквизит» к строке цвета; пусто или недопустимо — без
+// цвета. Все условия правила должны выполниться вместе.
 // for_roles и for_user необязательны; заданные вместе — оба условия сразу.
 type ChoiceRowStyle struct {
 	ForRoles []string
@@ -54,8 +76,18 @@ type ChoiceStyleUser struct {
 
 // ChoiceStyleRule — условие на элемент и его оформление.
 type ChoiceStyleRule struct {
-	When  string
-	Style FormCellStyle
+	When           string
+	WhenParam      string
+	WhenInFolder   string
+	ColorFrom      string
+	BackgroundFrom string
+	Disabled       bool
+	Style          FormCellStyle
+}
+
+// HasCondition — у правила есть хоть одно условие.
+func (r ChoiceStyleRule) HasCondition() bool {
+	return r.When != "" || r.WhenParam != "" || r.WhenInFolder != ""
 }
 
 type rawChoiceRowStyle struct {
@@ -73,11 +105,16 @@ type rawChoiceStyleUser struct {
 }
 
 type rawChoiceStyleRule struct {
-	When       string `yaml:"when"`
-	Color      string `yaml:"color"`
-	Background string `yaml:"background"`
-	Bold       bool   `yaml:"bold"`
-	Italic     bool   `yaml:"italic"`
+	When           string `yaml:"when"`
+	WhenParam      string `yaml:"when_param"`
+	WhenInFolder   string `yaml:"when_in_folder"`
+	Color          string `yaml:"color"`
+	Background     string `yaml:"background"`
+	ColorFrom      string `yaml:"color_from"`
+	BackgroundFrom string `yaml:"background_from"`
+	Bold           bool   `yaml:"bold"`
+	Italic         bool   `yaml:"italic"`
+	Disabled       bool   `yaml:"disabled"`
 }
 
 func parseChoiceRowStyle(raw *rawChoiceRowStyle) *ChoiceRowStyle {
@@ -101,8 +138,13 @@ func parseChoiceRowStyle(raw *rawChoiceRowStyle) *ChoiceRowStyle {
 	}
 	for _, r := range raw.Rules {
 		out.Rules = append(out.Rules, ChoiceStyleRule{
-			When:  strings.TrimSpace(r.When),
-			Style: FormCellStyle{Color: strings.TrimSpace(r.Color), Background: strings.TrimSpace(r.Background), Bold: r.Bold, Italic: r.Italic},
+			When:           strings.TrimSpace(r.When),
+			WhenParam:      strings.TrimSpace(r.WhenParam),
+			WhenInFolder:   strings.TrimSpace(r.WhenInFolder),
+			ColorFrom:      strings.TrimSpace(r.ColorFrom),
+			BackgroundFrom: strings.TrimSpace(r.BackgroundFrom),
+			Disabled:       r.Disabled,
+			Style:          FormCellStyle{Color: strings.TrimSpace(r.Color), Background: strings.TrimSpace(r.Background), Bold: r.Bold, Italic: r.Italic},
 		})
 	}
 	return out
@@ -144,15 +186,32 @@ func validateChoiceRowStyle(e *Entity, byName map[string]*Entity) error {
 		return fmt.Errorf("entity %s: choice_row_style: нет правил (rules)", e.Name)
 	}
 	for i, r := range st.Rules {
-		if r.When == "" {
-			return fmt.Errorf("entity %s: choice_row_style: правило %d без условия when", e.Name, i+1)
+		if !r.HasCondition() {
+			return fmt.Errorf("entity %s: choice_row_style: правило %d без условия (when, when_param или when_in_folder)", e.Name, i+1)
+		}
+		if r.WhenParam != "" && !choiceStyleParamName(r.WhenParam) {
+			return fmt.Errorf("entity %s: choice_row_style: правило %d: when_param %q — имя параметра (буквы, цифры, «_»)", e.Name, i+1, r.WhenParam)
+		}
+		if r.WhenInFolder != "" {
+			if !e.Hierarchical {
+				return fmt.Errorf("entity %s: choice_row_style: правило %d: when_in_folder — справочник не иерархический", e.Name, i+1)
+			}
+		}
+		for _, p := range []struct{ key, path string }{{"color_from", r.ColorFrom}, {"background_from", r.BackgroundFrom}} {
+			if p.path == "" {
+				continue
+			}
+			if err := validateChoiceStylePath(e, byName, p.path); err != nil {
+				return fmt.Errorf("entity %s: choice_row_style: правило %d: %s: %w", e.Name, i+1, p.key, err)
+			}
 		}
 		for _, c := range []struct{ key, value string }{{"color", r.Style.Color}, {"background", r.Style.Background}} {
 			if c.value != "" && csssafe.Color(c.value) == "" {
 				return fmt.Errorf("entity %s: choice_row_style: правило %d: недопустимый цвет %s %q (hex, rgb() или имя цвета)", e.Name, i+1, c.key, c.value)
 			}
 		}
-		if r.Style.Color == "" && r.Style.Background == "" && !r.Style.Bold && !r.Style.Italic {
+		if r.Style.Color == "" && r.Style.Background == "" && !r.Style.Bold && !r.Style.Italic &&
+			r.ColorFrom == "" && r.BackgroundFrom == "" && !r.Disabled {
 			return fmt.Errorf("entity %s: choice_row_style: правило %d ничего не оформляет", e.Name, i+1)
 		}
 	}
@@ -210,4 +269,50 @@ func choiceStyleField(e *Entity, name string) *Field {
 		}
 	}
 	return nil
+}
+
+// ChoiceStylePath — путь color_from/background_from: «Реквизит» (строка
+// элемента) или «Ссылка.Реквизит» (строка элемента, на который ссылается).
+func ChoiceStylePath(path string) (ref, field string) {
+	ref, field, ok := strings.Cut(strings.TrimSpace(path), ".")
+	if !ok {
+		return "", strings.TrimSpace(ref)
+	}
+	return strings.TrimSpace(ref), strings.TrimSpace(field)
+}
+
+func validateChoiceStylePath(e *Entity, byName map[string]*Entity, path string) error {
+	ref, field := ChoiceStylePath(path)
+	if strings.Contains(field, ".") || field == "" {
+		return fmt.Errorf("путь %q — «Реквизит» или «Ссылка.Реквизит»", path)
+	}
+	holder := e
+	if ref != "" {
+		f := choiceStyleField(e, ref)
+		if f == nil || f.RefEntity == "" {
+			return fmt.Errorf("%q — не ссылочный реквизит %s", ref, e.Name)
+		}
+		holder = byName[f.RefEntity]
+		if holder == nil {
+			return fmt.Errorf("неизвестный справочник %q", f.RefEntity)
+		}
+	}
+	f := choiceStyleField(holder, field)
+	if f == nil || f.Type != FieldTypeString {
+		return fmt.Errorf("у %s нет строкового реквизита %q", holder.Name, field)
+	}
+	return nil
+}
+
+// choiceStyleParamName — имя параметра оформления: буквы, цифры, «_».
+func choiceStyleParamName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for _, r := range name {
+		if r != '_' && !unicode.IsLetter(r) && !unicode.IsDigit(r) {
+			return false
+		}
+	}
+	return true
 }

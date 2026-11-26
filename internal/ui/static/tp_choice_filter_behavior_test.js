@@ -212,6 +212,39 @@ test('the grid reference editor keeps choice_row_style for preloaded, searched a
  editor.destroy();
 });
 
+// choice_row_style disabled (архивная реклама): строка видна в списке ячейки и
+// в окне подбора, но не выбирается ни мышью, ни вводом подписи.
+test('the grid reference editor shows disabled choice rows but never picks them',async()=>{
+ const env=runtime([{Выбор:''}],()=>Promise.resolve({ok:true,json:async()=>({items:[]})}));
+ const picked=[];env.window.openRefPicker=select=>picked.push(select);
+ const editorStart=managed.indexOf('  function refId('),editorEnd=managed.indexOf('  function ObNumberEditor(',editorStart);
+ vm.runInContext(managed.slice(editorStart,editorEnd),env.sandbox);
+ const container=env.sandbox.document.createElement('div');let commits=0;
+ const args={row:0,item:env.rows[0],column:{field:'Выбор',refEntity:'Реклама'},container,commitChanges(){commits++;},cancelChanges(){},grid:{getOptions(){return {};}}};
+ const editor=new env.sandbox.ObRefEditor('Выбор',[
+  {id:'arch',_label:'Листовки','\u0000ref_style':'color:#FF4500','\u0000ref_disabled':true},
+  {id:'site',_label:'Сайт'},
+ ],args);
+ editor.loadValue(args.item);await new Promise(setImmediate);
+ const wrapper=container.children[0],input=wrapper.children[0];
+ input.listeners.keydown({key:'ArrowDown',preventDefault(){},stopPropagation(){}});
+ const list=env.sandbox.document.body.children[0];
+ const arch=list.children.find(el=>/Листовки/.test(el.textContent));
+ assert.ok(arch,'архивная строка видна');
+ assert.equal(arch.getAttribute('data-ob-ref-disabled'),'1');
+ assert.match(arch.style.cssText,/color:#FF4500/);
+ arch.listeners.mousedown({preventDefault(){}});
+ assert.equal(commits,0,'клик по недоступной строке не фиксирует значение');
+ assert.equal(editor.serializeValue(),'','недоступная строка не выбрана мышью');
+ input.value='Листовки';
+ assert.notEqual(editor.serializeValue(),'arch','подпись недоступной строки не превращается в ссылку');
+ input.value='';input.listeners.input({});
+ wrapper.children[1].listeners.click({preventDefault(){},stopPropagation(){}});
+ const opt=picked[0].options.find(o=>o.value==='arch');
+ assert.ok(opt&&opt.disabled,'в окно подбора строка уходит недоступной');
+ editor.destroy();
+});
+
 test('picker choice keeps styling in subsequent grid input',()=>{
  const env=runtime([{Выбор:''}],()=>Promise.resolve({ok:true,json:async()=>({items:[]})}));
  let picker;
