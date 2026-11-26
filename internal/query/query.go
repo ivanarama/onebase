@@ -4733,27 +4733,30 @@ func (tr *translator) dateBoundaryParamAt(idx int) bool {
 }
 
 func (tr *translator) addSQLiteDateParam(name string, register bool) string {
-	layout := time.RFC3339
-	if register {
-		layout = time.RFC3339Nano
+	format := func(t time.Time) string {
+		if register {
+			return storage.SQLiteDateComparisonKey(t)
+		}
+		return t.UTC().Format(time.RFC3339)
 	}
 	var value any
 	switch v := tr.paramValues[name].(type) {
 	case string:
-		value = v // RFC3339 проверен общим решением для BETWEEN.
+		value = v
+		if register {
+			// Строковая граница уже проверена в dateBoundaryParamAt.
+			t, _ := time.Parse(time.RFC3339Nano, v)
+			value = storage.SQLiteDateComparisonKey(t)
+		}
 	case time.Time:
-		value = v.UTC().Format(layout)
+		value = format(v)
 	case *time.Time:
 		if v != nil {
-			value = v.UTC().Format(layout)
+			value = format(*v)
 		}
 	}
 	tr.args = append(tr.args, value)
-	placeholder := dialectOrDefault(tr.opts.Dialect).Placeholder(len(tr.args))
-	if register {
-		return "ob_utc_datetime(" + placeholder + ")"
-	}
-	return placeholder
+	return dialectOrDefault(tr.opts.Dialect).Placeholder(len(tr.args))
 }
 
 // uuidParamComparedToStringField: на PostgreSQL параметр — строка, похожая на

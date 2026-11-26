@@ -18,6 +18,12 @@ import "time"
 // they reach this boundary, so their calendar date remains unchanged.
 const sqliteTimeLayout = "2006-01-02 15:04:05-07:00"
 
+// SQLiteDateComparisonKey gives TEXT operands of register date comparisons
+// the same chronological ordering, including fractional seconds.
+func SQLiteDateComparisonKey(t time.Time) string {
+	return t.UTC().Format("2006-01-02 15:04:05.000000000")
+}
+
 // normalizeSQLiteArgs возвращает копию args, где каждый time.Time (и непустой
 // *time.Time) приведён к strftime-совместимой строке; остальные значения
 // проходят как есть. Применяется только на SQLite-пути — pgx биндит time.Time

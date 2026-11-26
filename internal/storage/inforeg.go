@@ -608,8 +608,8 @@ func infoRegListRows(ir *metadata.InfoRegister, raw []map[string]any) []map[stri
 // здесь было написано «time.Parse трактует зононезависимый ввод как UTC» — это
 // неверно для второго списка и вводило в заблуждение (#962).
 var regPeriodLayouts = []string{
+	sqliteTimeLayout,
 	time.RFC3339,
-	"2006-01-02 15:04:05-07:00",
 	"2006-01-02 15:04:05-07",
 	"2006-01-02 15:04:05Z07:00",
 }

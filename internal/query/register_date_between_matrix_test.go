@@ -219,7 +219,7 @@ func TestRegisterDateBetweenInJoinCondition(t *testing.T) {
 		Params: map[string]any{"Начало": date, "Конец": date.Add(time.Hour), "Метка": "предмет"},
 	})
 	require.NoError(t, err)
-	require.Equal(t, 3, strings.Count(compiled.SQL, "ob_utc_datetime"), compiled.SQL)
+	require.Equal(t, 1, strings.Count(compiled.SQL, "ob_utc_datetime"), compiled.SQL)
 }
 
 // Строковые сравнения и произвольные выражения границ не получают новую
