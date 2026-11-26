@@ -4670,10 +4670,10 @@ func (tr *translator) sqliteDateParamField(idx int) int {
 	}
 	// Для регистра обе границы проверяет sqliteRegisterDateBetweenField.
 	// Здесь остаются только параметры BETWEEN для полей объектов.
-	if tr.dateFieldAt(idx-2) && !tr.registerFieldAt(idx-2) && tr.keywordAt(idx-1, "МЕЖДУ", "BETWEEN") {
+	if tr.dateFieldAt(idx-2) && !tr.dateNeedsUTCKey(idx-2) && tr.keywordAt(idx-1, "МЕЖДУ", "BETWEEN") {
 		return idx - 2
 	}
-	if tr.dateFieldAt(idx-4) && !tr.registerFieldAt(idx-4) &&
+	if tr.dateFieldAt(idx-4) && !tr.dateNeedsUTCKey(idx-4) &&
 		tr.keywordAt(idx-3, "МЕЖДУ", "BETWEEN") &&
 		tr.timeParamAt(idx-2) &&
 		tr.keywordAt(idx-1, "И", "AND") {
@@ -4688,7 +4688,7 @@ func (tr *translator) sqliteDateParamField(idx int) int {
 func (tr *translator) sqliteRegisterDateBetweenField(idx int) int {
 	for _, first := range []int{idx, idx - 2} {
 		field, last := first-2, first+2
-		if !tr.dateFieldAt(field) || !tr.registerFieldAt(field) ||
+		if !tr.dateFieldAt(field) || !tr.dateNeedsUTCKey(field) ||
 			!tr.keywordAt(first-1, "МЕЖДУ", "BETWEEN") || !tr.keywordAt(first+1, "И", "AND") ||
 			!tr.dateBoundaryParamAt(first) || !tr.dateBoundaryParamAt(last) ||
 			(!tr.timeParamAt(first) && !tr.timeParamAt(last)) {
@@ -4921,6 +4921,9 @@ func (tr *translator) dateFieldAt(idx int) bool {
 	if idx < 0 || idx >= len(tr.tokens) || tr.tokens[idx].kind != tIdent {
 		return false
 	}
+	if tr.projectedFieldAt(idx) {
+		return tr.paramFieldTypeAt(idx) == metadata.FieldTypeDate
+	}
 	if tr.registerFieldAt(idx) {
 		typ, _, known := tr.columnTypeAt(idx, lowerFast(tr.tokens[idx].val), tr.columnQualifierAt(idx))
 		return known && typ == metadata.FieldTypeDate
@@ -4931,7 +4934,7 @@ func (tr *translator) dateFieldAt(idx int) bool {
 // Оборачиваем только поле того же прямого сравнения, чей параметр получил
 // ob_utc_datetime. SELECT/ORDER BY и сравнения строк не меняют представление.
 func (tr *translator) sqliteRegisterDateComparisonAt(idx int) bool {
-	if !tr.dateFieldAt(idx) || !tr.registerFieldAt(idx) {
+	if !tr.dateFieldAt(idx) || !tr.dateNeedsUTCKey(idx) {
 		return false
 	}
 	start := idx
@@ -4944,6 +4947,20 @@ func (tr *translator) sqliteRegisterDateComparisonAt(idx int) bool {
 		}
 	}
 	return false
+}
+
+// A derived date may carry either the object's RFC3339 or the register's
+// storage representation. Normalize it with the same comparison key as a register.
+func (tr *translator) dateNeedsUTCKey(idx int) bool {
+	return tr.registerFieldAt(idx) || tr.projectedFieldAt(idx)
+}
+
+func (tr *translator) projectedFieldAt(idx int) bool {
+	if tr.columnQualifierAt(idx) != "" {
+		return tr.isDerivedColumnAt(idx)
+	}
+	scope, ok := tr.sourceCtx.scopeAt(idx)
+	return ok && scope.sourceCount == 1 && len(scope.derivedAliases) == 1
 }
 
 // registerFieldAt — поле в позиции idx принадлежит источнику-регистру: по
@@ -6457,10 +6474,10 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 		if t.kind == tParam {
 			tr.prevWasDot = false
 			normalizeDate := tr.sqliteDateParamComparedToField(tr.pos)
-			registerDate := normalizeDate && tr.registerFieldAt(tr.sqliteDateParamField(tr.pos))
+			utcKey := normalizeDate && tr.dateNeedsUTCKey(tr.sqliteDateParamField(tr.pos))
 			tr.advance()
 			if normalizeDate {
-				tr.emit(tr.addSQLiteDateParam(t.val, registerDate))
+				tr.emit(tr.addSQLiteDateParam(t.val, utcKey))
 			} else if tr.emptyRefParamAt(tr.pos - 1) {
 				tr.emit("NULL")
 			} else if tr.uuidParamComparedToStringField(tr.pos - 1) {
