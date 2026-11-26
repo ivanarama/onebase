@@ -50,6 +50,8 @@ elements:
     name: Группа
   - kind: ПолеКартинки
     name: Картинка
+  - kind: СтраницыФормы
+    name: Закладки
 `
 	if err := os.WriteFile(filepath.Join(formDir, "формаобъекта.form.yaml"), []byte(formYAML), 0600); err != nil {
 		t.Fatal(err)
@@ -116,12 +118,12 @@ elements:
 	if err := json.Unmarshal([]byte(html.UnescapeString(result)), &rows); err != nil {
 		t.Fatalf("результат браузера: %v: %s", err, result)
 	}
-	if len(rows) != 6 {
-		t.Fatalf("проверено %d выборов вместо 6: %s", len(rows), result)
+	if len(rows) != 7 {
+		t.Fatalf("проверено %d выборов вместо 7: %s", len(rows), result)
 	}
 	for index, row := range rows {
 		wantNode := index
-		if index == 5 {
+		if index == 6 {
 			wantNode = 0 // Повторный выбор не накапливает редакторы.
 		}
 		if row.Node != wantNode {
@@ -138,7 +140,7 @@ elements:
 			t.Errorf("узел %d: редакторов choice_filter %d вместо %d", row.Node, row.Editors, wantEditors)
 		}
 		wantBackground, wantOrientation := 0, 0
-		if row.Node == 1 || row.Node == 3 {
+		if row.Node == 1 || row.Node == 3 || row.Node == 5 {
 			wantBackground = 1
 		}
 		if row.Node == 3 {
@@ -159,7 +161,7 @@ window.addEventListener('load', function () {
     var first = document.querySelector('#canvas-host [data-node-id="elements.0"]');
     if (!first) return;
     clearInterval(timer);
-    var rows = [0, 1, 2, 3, 4, 0].map(function (node) {
+    var rows = [0, 1, 2, 3, 4, 5, 0].map(function (node) {
       document.querySelector('#canvas-host [data-node-id="elements.' + node + '"]').click();
       var panel = document.getElementById('prop-body');
       var labels = Array.from(panel.querySelectorAll('.prop-row > label'));
