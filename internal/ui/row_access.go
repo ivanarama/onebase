@@ -62,7 +62,7 @@ func (s *Server) applyListFormFilter(r *http.Request, entity *metadata.Entity, p
 	}
 	user := auth.UserFromContext(r.Context())
 	off := listFormFilterOff(r)
-	var extra []storage.Predicate
+	var fields, queries []storage.Predicate
 	for i, cond := range form.ListFilter {
 		// Снятый пользователем отбор по умолчанию не применяется; снять можно
 		// только removable-условие — адресом остальные не отключить.
@@ -70,12 +70,15 @@ func (s *Server) applyListFormFilter(r *http.Request, entity *metadata.Entity, p
 			continue
 		}
 		var (
-			pred storage.Predicate
-			ok   bool
+			pred    storage.Predicate
+			ok      bool
+			isQuery bool
 		)
 		if cond.ValueQuery != "" {
+			isQuery = true
 			pred, ok = s.listFilterValueQueryPredicate(r.Context(), entity, cond, user)
 		} else if strings.TrimSpace(cond.Query) != "" {
+			isQuery = true
 			pred, ok = s.listFilterQueryPredicate(r.Context(), entity, cond, user)
 		} else {
 			pred, ok = s.listFilterPredicate(entity, cond, user)
@@ -83,15 +86,32 @@ func (s *Server) applyListFormFilter(r *http.Request, entity *metadata.Entity, p
 		if !ok {
 			continue
 		}
-		extra = append(extra, pred)
+		if isQuery {
+			queries = append(queries, pred)
+		} else {
+			fields = append(fields, pred)
+		}
 	}
-	if len(extra) == 0 {
+	if len(fields) == 0 && len(queries) == 0 {
 		return params
 	}
-	if params.RowFilter != nil {
-		extra = append(extra, *params.RowFilter)
+	parts := queries
+	if len(fields) != 0 {
+		cond := storage.Predicate{All: fields}
+		// Простой отбор по полю сохраняет папки для навигации. Условия query
+		// и value_query ограничивают и папки, и записи; строковый доступ — через И.
+		if entity.Hierarchical {
+			cond = storage.Predicate{Any: []storage.Predicate{
+				{Field: "is_folder", Op: "eq", Value: true},
+				cond,
+			}}
+		}
+		parts = append(parts, cond)
 	}
-	combined := storage.Predicate{All: extra}
+	if params.RowFilter != nil {
+		parts = append(parts, *params.RowFilter)
+	}
+	combined := storage.Predicate{All: parts}
 	params.RowFilter = &combined
 	return params
 }
@@ -364,10 +384,15 @@ func (s *Server) listFilterPredicate(entity *metadata.Entity, cond metadata.Form
 	}
 
 	head, attr, nested := strings.Cut(field, ".")
-	if !nested {
-		return storage.Predicate{Field: head, Op: op, Value: value}, true
-	}
 	refField, ok := entityFieldByName(entity, head)
+	// _users.id is the reference itself, including its NULL semantics. Do not
+	// resolve it through the configuration registry or expose private user fields.
+	if ok && strings.EqualFold(refField.RefEntity, metadata.SystemUsersEntity) && (!nested || strings.EqualFold(attr, "id")) {
+		return listFormFilterLeaf(entity, head, op, value), true
+	}
+	if !nested {
+		return listFormFilterLeaf(entity, head, op, value), true
+	}
 	if !ok || refField.RefEntity == "" {
 		return storage.Predicate{}, false
 	}
@@ -375,11 +400,28 @@ func (s *Server) listFilterPredicate(entity *metadata.Entity, cond metadata.Form
 	if target == nil {
 		return storage.Predicate{}, false
 	}
+	leaf := listFormFilterLeaf(target, attr, op, value)
 	return storage.Predicate{
 		Field:        head,
 		RefEntity:    target,
-		RefPredicate: &storage.Predicate{Field: attr, Op: op, Value: value},
+		RefPredicate: &leaf,
 	}, true
+}
+
+// Form filters accept empty/not_empty for any reference leaf. UUID columns
+// store NULL rather than empty strings on both dialects; the generic predicate
+// also compares with an empty string, which PostgreSQL rejects for UUID.
+// Normalize only form-filter leaves, preserving string and row-access semantics.
+func listFormFilterLeaf(entity *metadata.Entity, field, op string, value any) storage.Predicate {
+	if storage.PredicateFieldIsReference(entity, field) {
+		switch strings.ToLower(op) {
+		case "empty":
+			op, value = "eq", nil
+		case "not_empty":
+			op, value = "ne", nil
+		}
+	}
+	return storage.Predicate{Field: field, Op: op, Value: value}
 }
 
 func (s *Server) rowAllowed(w http.ResponseWriter, r *http.Request, entity *metadata.Entity, op string, row map[string]any) bool {
