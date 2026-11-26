@@ -106,7 +106,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [other, ui-1, ui-2, ui-3, ui-4, launcher-1, launcher-2]
+        shard: [other, pipelinehealth, ui-1, ui-2, ui-3, ui-4, launcher-1, launcher-2]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
