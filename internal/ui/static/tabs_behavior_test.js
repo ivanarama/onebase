@@ -450,6 +450,36 @@ test('same-origin iframe navigation refreshes persistence, restore and URL dedup
   assert.deepEqual(savedTabs(storage).map(tab => tab.url), [listURL, createURL]);
 });
 
+test('return notification reuses a saved Cyrillic card across URL encodings and case', () => {
+  const storage = new FakeStorage();
+  const app = shell(storage);
+  const id = '00000000-0000-0000-0000-000000000024';
+  const widgetURL = '/ui/document/' + encodeURIComponent('А_Задача').toLowerCase() + '/' + id;
+  const notificationURL = '/ui/document/' + encodeURIComponent('а_задача') + '/' + id;
+  const task = app.open(widgetURL, 'Task');
+  app.markDirty(0);
+  // A saved form reports the entity spelling used by the server. The iframe
+  // and its unsaved values must survive a return command from another form.
+  app.navigate(0, '/ui/document/' + encodeURIComponent('А_Задача') + '/' + id + '?_ob_conceal=synthetic-form-token');
+  app.open('/ui/processor/Search', 'Search');
+  app.post({source: 'obOpenTab', url: notificationURL, title: 'Task'}, 1);
+  assert.equal(app.count(), 2, 'return opened another task document');
+  assert.equal(app.activeIndex(), 0);
+  assert.strictEqual(app.open(notificationURL, 'Task'), task);
+  assert.equal(task.dirty, true, 'return lost the edit state');
+  assert.ok(savedTabs(storage)[0].url.endsWith('?_ob_conceal=synthetic-form-token'), 'return replaced the live form context');
+});
+
+test('same record with distinct parameters, fragments or an explicit duplicate keeps separate tabs', () => {
+  const app = shell(new FakeStorage());
+  const base = '/ui/document/' + encodeURIComponent('А_Задача') + '/24';
+  app.open(base + '?mode=one', 'First');
+  app.open(base + '?mode=two', 'Other parameters');
+  app.open(base + '?mode=one#details', 'Other fragment');
+  app.open(base + '?mode=one', 'Explicit duplicate', {allowDup: true});
+  assert.equal(app.count(), 4);
+});
+
 test('history replacement refreshes persistence, restore and URL deduplication without iframe load', () => {
   const storage = new FakeStorage();
   const createURL = '/ui/document/purchase/new';
