@@ -151,6 +151,21 @@ func TestMergeMechanicalConflictAllowlist(t *testing.T) {
 	)
 }
 
+func TestMergeChecksPreparedConflictBeforeIntentAndPush(t *testing.T) {
+	merge := skill(t, "merge-shepherd")
+	requireCompactInOrder(t, merge,
+		"**DIRTY (конфликт)**",
+		"`prepared_tree_check_command` из того же envelope **до первого intent**",
+		"`tree` из `git write-tree`",
+		"Код 0 и JSON `state=verified`",
+		"Код 1 и JSON `state=needs-resolution`",
+		"Код 2 с `action=error`",
+		"выбери либо создай `pp:base-sync-intent`",
+		"`git rev-parse HEAD^{tree}`",
+		"git push --force-with-lease=",
+	)
+}
+
 func TestMergeFallbackUsesValidatedGateAsCleanupBarrier(t *testing.T) {
 	legacy := repositoryFile(t, ".claude", "skills", "merge-shepherd", "references", "legacy-protocol.md")
 	docs := repositoryFile(t, "docs", "maintenance-pipeline.md")
