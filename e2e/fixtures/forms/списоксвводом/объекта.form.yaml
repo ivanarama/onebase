@@ -1,0 +1,24 @@
+schema: onebase.form/v1
+form:
+  name: ФормаОбъекта
+  kind: object
+  entity: СписокСВводом
+attributes:
+  - name: Объект
+    type: DocumentRef.СписокСВводом
+    save: true
+    main: true
+elements:
+  - kind: ПолеСписка
+    name: ПолеВремя
+    data_path: Объект.ВремяВизита
+    choice_free_input: true
+    choices:
+      - value: "8-14"
+      - value: "14-20"
+      - value: "ЗМ в течение часа"
+    events:
+      ПриИзменении: ВремяПриИзменении
+  - kind: ПолеВвода
+    name: ПолеОтметка
+    data_path: Объект.Отметка

@@ -1,0 +1,7 @@
+name: СписокСВводом
+title: "Проверка списка с вводом"
+fields:
+  - name: ВремяВизита
+    type: string
+  - name: Отметка
+    type: string
