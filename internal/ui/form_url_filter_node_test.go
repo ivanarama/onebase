@@ -13,6 +13,24 @@ import (
 // formURL строил только путь, и кнопка формы не могла открыть «Жалобы на
 // мастере» или «Штрафы на мастере» с отбором, как в 1С.
 func TestFormURLCarriesFilterAndReportParams(t *testing.T) {
+	runFormURLNode(t, `
+const assert = require('node:assert');
+assert.strictEqual(formURL({'вид': 'document', 'сущность': 'А_Жалоба'}), '/ui/document/' + encodeURIComponent('а_жалоба'));
+assert.strictEqual(formURL({'вид': 'document', 'сущность': 'А_Жалоба', 'отбор': {'Мастер': 'm-1'}}),
+  '/ui/document/' + encodeURIComponent('а_жалоба') + '?' + encodeURIComponent('f.Мастер') + '=m-1');
+assert.strictEqual(formURL({'вид': 'document', 'сущность': 'А_Жалоба', 'id': 'x', 'отбор': {'Мастер': 'm-1'}}),
+  '/ui/document/' + encodeURIComponent('а_жалоба') + '/x', 'у формы объекта отбора нет');
+assert.strictEqual(formURL({'вид': 'report', 'сущность': 'Штрафы', 'параметры': {'Мастер': 'm-1', 'Пусто': null}, 'сформировать': true}),
+  '/ui/report/' + encodeURIComponent('Штрафы') + '?' + encodeURIComponent('Мастер') + '=m-1&__run=1');
+assert.strictEqual(formURL({'вид': 'report', 'сущность': 'Штрафы'}), '/ui/report/' + encodeURIComponent('Штрафы'));
+assert.strictEqual(formURL({'вид': 'processor', 'сущность': 'Обр', 'параметры': {'А': 1, 'Б': false}, 'сформировать': true}),
+  '/ui/processor/' + encodeURIComponent('Обр') + '?' + encodeURIComponent('А') + '=1&' + encodeURIComponent('Б') + '=false');
+console.log('ok');
+`)
+}
+
+func runFormURLNode(t *testing.T, script string) string {
+	t.Helper()
 	node, err := exec.LookPath("node")
 	if err != nil {
 		t.Skip("node is not installed")
@@ -27,26 +45,15 @@ func TestFormURLCarriesFilterAndReportParams(t *testing.T) {
 		t.Fatal("не найден конец formURL")
 	}
 	fn := src[start : start+end+4]
-	test := fn + `
-const assert = require('node:assert');
-assert.strictEqual(formURL({'вид': 'document', 'сущность': 'А_Жалоба'}), '/ui/document/' + encodeURIComponent('а_жалоба'));
-assert.strictEqual(formURL({'вид': 'document', 'сущность': 'А_Жалоба', 'отбор': {'Мастер': 'm-1'}}),
-  '/ui/document/' + encodeURIComponent('а_жалоба') + '?' + encodeURIComponent('f.Мастер') + '=m-1');
-assert.strictEqual(formURL({'вид': 'document', 'сущность': 'А_Жалоба', 'id': 'x', 'отбор': {'Мастер': 'm-1'}}),
-  '/ui/document/' + encodeURIComponent('а_жалоба') + '/x', 'у формы объекта отбора нет');
-assert.strictEqual(formURL({'вид': 'report', 'сущность': 'Штрафы', 'параметры': {'Мастер': 'm-1', 'Пусто': null}, 'сформировать': true}),
-  '/ui/report/' + encodeURIComponent('Штрафы') + '?' + encodeURIComponent('Мастер') + '=m-1&__run=1');
-assert.strictEqual(formURL({'вид': 'report', 'сущность': 'Штрафы'}), '/ui/report/' + encodeURIComponent('Штрафы'));
-assert.strictEqual(formURL({'вид': 'processor', 'сущность': 'Обр', 'параметры': {'А': 1}}), '/ui/processor/' + encodeURIComponent('Обр'));
-console.log('ok');
-`
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "t.js"), []byte(test), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "t.js"), []byte(fn+"\n"+script), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	cmd := exec.Command(node, "t.js") //nolint:gosec // test-only executable resolved by exec.LookPath
 	cmd.Dir = dir
-	if out, err := cmd.CombinedOutput(); err != nil {
+	out, err := cmd.CombinedOutput()
+	if err != nil {
 		t.Fatalf("node: %v\n%s", err, out)
 	}
+	return strings.TrimSpace(string(out))
 }
