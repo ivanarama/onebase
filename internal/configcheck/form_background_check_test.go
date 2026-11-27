@@ -162,3 +162,40 @@ func TestCheckFormBackground_TableHeaderColors(t *testing.T) {
 		t.Fatalf("header_background у поля должен быть назван игнорируемым: %+v", warns)
 	}
 }
+
+func TestRunFullFormTextStylePlacement(t *testing.T) {
+	dir := refCardButtonProject(t, `schema: onebase.form/v1
+form: {name: Объекта, kind: object, entity: Заказ}
+elements:
+  - {kind: Кнопка, name: Кнопка1, label_color: red, title_color: green, title_bold: true}
+  - {kind: ПолеВвода, name: ПолеНомер, data_path: Объект.Номер, label_color: red, title_color: green, tab_titles_bold: true}
+  - kind: СтраницыФормы
+    name: Закладки
+    tab_titles_bold: true
+    children:
+      - {kind: Страница, name: Первая, title_color: green, title_bold: true}
+`)
+	result := RunFull(dir)
+	if !result.OK {
+		t.Fatalf("check: %+v", result.Issues)
+	}
+	var got []string
+	for _, w := range result.Warnings {
+		if w.Code == "form.style-kind" {
+			got = append(got, w.Message)
+		}
+	}
+	want := []string{
+		`"Кнопка1": ключ label_color`, `"Кнопка1": ключ title_color`, `"Кнопка1": ключ title_bold`,
+		`"ПолеНомер": ключ title_color`, `"ПолеНомер": ключ tab_titles_bold`,
+	}
+	if len(got) != len(want) {
+		t.Fatalf("ожидалось 5 предупреждений о виде элемента, получено %d: %v", len(got), got)
+	}
+	all := strings.Join(got, "\n")
+	for _, key := range want {
+		if !strings.Contains(all, key) {
+			t.Errorf("нет предупреждения %s: %v", key, got)
+		}
+	}
+}
