@@ -43,11 +43,15 @@ func measureCellForExcel(v any, m report.Measure) any {
 // Значения показателей передаются как float64, чтобы Excel видел числа, а не текст.
 func composedRows(res *compose.Result, spec *report.Composition) (headers []string, rows [][]any) {
 	headers = make([]string, 0, 1+len(spec.Measures))
-	headers = append(headers, strings.Join(spec.Groupings, " / "))
+	labelCols := 0
+	if composedLabelColumn(spec) {
+		headers = append(headers, strings.Join(spec.Groupings, " / "))
+		labelCols = 1
+	}
 	for _, m := range spec.Measures {
 		headers = append(headers, measureTitle(m))
 	}
-	sink := &excelComposeSink{spec: spec, colCount: 1 + len(spec.Measures)}
+	sink := &excelComposeSink{spec: spec, colCount: labelCols + len(spec.Measures)}
 	walkComposed(res, spec, sink)
 	return headers, sink.rows
 }
@@ -63,9 +67,13 @@ type excelComposeSink struct {
 // (numForExcel: nil → пустая ячейка, иначе float64).
 func (e *excelComposeSink) row(label string, vals map[string]any) {
 	r := make([]any, e.colCount)
-	r[0] = label
+	off := 0
+	if composedLabelColumn(e.spec) {
+		r[0] = label
+		off = 1
+	}
 	for i, m := range e.spec.Measures {
-		r[i+1] = measureCellForExcel(vals[m.Field], m)
+		r[off+i] = measureCellForExcel(vals[m.Field], m)
 	}
 	e.rows = append(e.rows, r)
 }

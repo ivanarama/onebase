@@ -48,6 +48,11 @@ func walkComposed(res *compose.Result, spec *report.Composition, s composeSink) 
 	for _, g := range res.Groups {
 		walk(g, 0, "")
 	}
+	if spec.Detail {
+		for _, d := range res.Details {
+			s.detail(d, 0, "")
+		}
+	}
 	if spec.Totals.Grand {
 		s.grand(res.Grand)
 	}

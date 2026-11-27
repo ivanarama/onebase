@@ -24,7 +24,10 @@ func renderComposedTable(res *compose.Result, spec *report.Composition) template
 		fmt.Fprintf(&b, ` data-collapse-to="%d"`, depth)
 	}
 	b.WriteString(`>`)
-	b.WriteString(`<thead><tr><th>` + html.EscapeString(strings.Join(spec.Groupings, " / ")) + `</th>`)
+	b.WriteString(`<thead><tr>`)
+	if composedLabelColumn(spec) {
+		b.WriteString(`<th>` + html.EscapeString(strings.Join(spec.Groupings, " / ")) + `</th>`)
+	}
 	for _, m := range spec.Measures {
 		b.WriteString(`<th class="num" style="` + html.EscapeString(measureAlign(m)) + `">` + html.EscapeString(measureTitle(m)) + `</th>`)
 	}
@@ -36,6 +39,12 @@ func renderComposedTable(res *compose.Result, spec *report.Composition) template
 	walkComposed(res, spec, sink)
 	b.WriteString(`</tbody></table>`)
 	return template.HTML(b.String()) //nolint:gosec // G203: HTML собран с html.EscapeString на каждом значении
+}
+
+// Flat details need no group/indent column. An explicitly configured drilldown
+// still needs its own cell, and grouped/aggregate-only layouts keep their labels.
+func composedLabelColumn(spec *report.Composition) bool {
+	return len(spec.Groupings) > 0 || !spec.Detail || (spec.DetailLink != "" && spec.DetailEntity != "")
 }
 
 // collapseLevel читает начальное состояние групп из компоновки (issue #575):
@@ -107,16 +116,18 @@ func (h *htmlComposeSink) detail(d compose.DetailRow, level int, path string) {
 	// Первая ячейка: ссылка-расшифровка на исходный документ (если настроено).
 	// Ссылка строится только когда заданы DetailLink, DetailEntity и значение поля
 	// непустое. Без DetailEntity переход бессмыслен — выводим пустую ячейку.
-	linked := false
-	if h.spec.DetailLink != "" && h.spec.DetailEntity != "" {
-		if v := fmtVal(d.Values[h.spec.DetailLink]); v != "" {
-			href := "/ui/document/" + url.PathEscape(h.spec.DetailEntity) + "/" + url.PathEscape(v)
-			fmt.Fprintf(h.b, `<td style="padding-left:%dpx"><a href="%s">→</a></td>`, 8+level*18, html.EscapeString(href))
-			linked = true
+	if composedLabelColumn(h.spec) {
+		linked := false
+		if h.spec.DetailLink != "" && h.spec.DetailEntity != "" {
+			if v := fmtVal(d.Values[h.spec.DetailLink]); v != "" {
+				href := "/ui/document/" + url.PathEscape(h.spec.DetailEntity) + "/" + url.PathEscape(v)
+				fmt.Fprintf(h.b, `<td style="padding-left:%dpx"><a href="%s">→</a></td>`, 8+level*18, html.EscapeString(href))
+				linked = true
+			}
 		}
-	}
-	if !linked {
-		fmt.Fprintf(h.b, `<td style="padding-left:%dpx"></td>`, 8+level*18)
+		if !linked {
+			fmt.Fprintf(h.b, `<td style="padding-left:%dpx"></td>`, 8+level*18)
+		}
 	}
 	h.measureCells(d.Values, d.Styles)
 	h.b.WriteString(`</tr>`)
@@ -133,7 +144,10 @@ func (h *htmlComposeSink) subtotal(g *compose.Group, level int, path string) {
 func (h *htmlComposeSink) grand(grand map[string]any) {
 	// У общего итога нет условного оформления — measureCells с nil-стилями даёт
 	// те же ячейки (только выравнивание), что и прежний отдельный код.
-	h.b.WriteString(`<tr class="grand"><td>ВСЕГО</td>`)
+	h.b.WriteString(`<tr class="grand">`)
+	if composedLabelColumn(h.spec) {
+		h.b.WriteString(`<td>ВСЕГО</td>`)
+	}
 	h.measureCells(grand, nil)
 	h.b.WriteString(`</tr>`)
 }
