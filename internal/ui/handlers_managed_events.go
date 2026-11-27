@@ -2504,6 +2504,9 @@ func (s *Server) handleProcessorFormEventMode(w http.ResponseWriter, r *http.Req
 		respondJSON(enc, formEventResponse{Error: "processor not found: " + procName})
 		return
 	}
+	if proc.IsReport() {
+		r = r.WithContext(access.WithReportOutput(r.Context()))
+	}
 	canRun := s.can(r, "processor", proc.Name, "run")
 	canRunExternal := s.canRunExternalProc(r, proc)
 	if closeInv == nil && !canRun {

@@ -85,6 +85,9 @@ type Field struct {
 	// Маркер, который по умолчанию не защищает, был бы просто комментарием, а
 	// комментарий в поле с телефоном читается как гарантия.
 	PII bool
+	// ReportPII hides this field only at report output boundaries. It does not
+	// alter the card's PII/read/disclosure policy (e.g. a house visible on a card).
+	ReportPII bool
 	// Default — значение по умолчанию при СОЗДАНИИ нового объекта (план 153),
 	// сырой строкой из YAML: литерал, `сегодня`/`сейчас`, `константа.<Имя>`,
 	// `текущийпользователь`, `единственный`. Разбор и проверка — ParseDefault
