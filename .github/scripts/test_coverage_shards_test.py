@@ -1,6 +1,7 @@
 """Public plan/run/merge CLI and fail-closed workflow contracts."""
 
 import hashlib
+import itertools
 import json
 import os
 from pathlib import Path
@@ -260,14 +261,13 @@ class WorkflowContract(unittest.TestCase):
         jobs = text.split("\n  build:\n", 1)
         self.assertEqual(len(jobs), 2)
         build = jobs[1].split("\n  launcher-webview-build:", 1)[0]
-        self.assertIn("needs: [classify, unit-plan, unit-race]", build)
+        self.assertIn("needs: [classify, unit-plan, unit-race, timezone-tests]", build)
         self.assertIn("if: ${{ always() }}", build)
-        self.assertIn('test "$PLAN_RESULT" = success && test "$RACE_RESULT" = success', build)
         self.assertIn("--plan-sha256 \"$PLAN_SHA\"", build)
         self.assertIn("merge-multiple: false", build)
         self.assertIn("shard: [" + ", ".join(LABELS) + "]", text)
         self.assertIn("fail-fast: false", text)
-        race = text.split("\n  unit-race:\n", 1)[1].split("\n  build:\n", 1)[0]
+        race = text.split("\n  unit-race:\n", 1)[1].split("\n  timezone-tests:\n", 1)[0]
         self.assertLess(race.index("uses: actions/setup-go@v5"), race.index("name: Prepare private cache paths"))
         self.assertLess(race.index("name: Prepare private cache paths"), race.index("uses: actions/cache@v4"))
         for job in ("unit-plan", "unit-race"):
@@ -275,8 +275,13 @@ class WorkflowContract(unittest.TestCase):
             # The first unindented job boundary, not nested step indentation.
             self.assertIn("always() && !cancelled()", section)
             self.assertIn("needs.classify.result != 'success'", section)
-        for zone in ("Asia/Kolkata", "America/New_York"):
-            self.assertIn("TZ: " + zone, build)
+        zones = jobs[0].split("\n  timezone-tests:\n", 1)[1]
+        rerun = "go test -count=1 ./internal/storage/ ./internal/query/ ./internal/entityservice/ ./internal/ui/"
+        self.assertIn("TZ: ${{ matrix.timezone }}", zones)
+        self.assertIn("run: " + rerun, zones)
+        self.assertNotIn(rerun, build)
+        self.assertIn("go-version-file: '.go-version'", zones)
+        self.assertIn("node-version: ${{ env.RACE_NODE_VERSION }}", zones)
         for old in ("go vet ./...", "go build ./...", "CGO_ENABLED: 0", "GOOS: windows",
                     "ci_metadata_test.py", "classify-ci.sh", "workflow_dispatch:"):
             self.assertIn(old, text)
@@ -285,16 +290,17 @@ class WorkflowContract(unittest.TestCase):
     @unittest.skipIf(os.name == "nt", "actual POSIX workflow shell")
     def test_actual_required_gate_rejects_skips_cancellation_and_missing_results(self):
         text = RUNNER.parents[1].joinpath("workflows/ci.yml").read_text(encoding="utf-8")
-        block = text.split("      - name: Require every race shard\n", 1)[1].split("      - name: Docs-only success", 1)[0]
+        block = text.split("      - name: Require race and timezone tests\n", 1)[1].split("      - name: Docs-only success", 1)[0]
         shell = textwrap.dedent(block.split("        run: |\n", 1)[1])
+        outcomes = ("success", "failure", "cancelled", "skipped", "")
         for docs in ("true", "false"):
-            for plan in ("success", "failure", "cancelled", "skipped", ""):
-                for race in ("success", "failure", "cancelled", "skipped", ""):
-                    with self.subTest(docs=docs, plan=plan, race=race):
-                        result = subprocess.run(["/bin/sh", "-e", "-c", shell], capture_output=True,
-                                                env=dict(os.environ, DOCS=docs, PLAN_RESULT=plan, RACE_RESULT=race))
-                        expected = (plan == race == ("skipped" if docs == "true" else "success"))
-                        self.assertEqual(result.returncode == 0, expected, result.stderr)
+            for plan, race, zone in itertools.product(outcomes, repeat=3):
+                with self.subTest(docs=docs, plan=plan, race=race, zone=zone):
+                    result = subprocess.run(["/bin/sh", "-e", "-c", shell], capture_output=True,
+                                            env=dict(os.environ, DOCS=docs, PLAN_RESULT=plan,
+                                                     RACE_RESULT=race, TIMEZONE_RESULT=zone))
+                    expected = plan == race == zone == ("skipped" if docs == "true" else "success")
+                    self.assertEqual(result.returncode == 0, expected, result.stderr)
 
     @unittest.skipIf(os.name == "nt", "actual POSIX workflow shell")
     def test_postgres_gate_rejects_missing_skipped_and_failed_results(self):
