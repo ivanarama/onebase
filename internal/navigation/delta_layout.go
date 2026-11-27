@@ -21,6 +21,7 @@ type layoutNode struct {
 	title         string
 	titles        map[string]string
 	icon          string
+	gradient      bool
 	item          Item
 }
 
@@ -57,7 +58,7 @@ func readLayout(tree Tree) (*layout, error) {
 		return add(i.ID, &layoutNode{kind: itemNode, parent: parent, title: i.Title, titles: copyTitles(i.Titles), icon: i.Icon, item: cloneItem(i)})
 	}
 	for _, s := range tree.Sections {
-		if err := add(s.ID, &layoutNode{kind: sectionNode, titleExplicit: s.TitleExplicit, title: s.Title, titles: copyTitles(s.Titles), icon: s.Icon}); err != nil {
+		if err := add(s.ID, &layoutNode{kind: sectionNode, titleExplicit: s.TitleExplicit, title: s.Title, titles: copyTitles(s.Titles), icon: s.Icon, gradient: s.Gradient}); err != nil {
 			return nil, err
 		}
 		for _, i := range s.Items {
@@ -144,7 +145,7 @@ func (l *layout) tree(context string) Tree {
 	}
 	for _, id := range l.list("", sectionNode) {
 		n := l.nodes[id]
-		s := Section{ID: id, TitleExplicit: n.titleExplicit, Title: n.title, Titles: copyTitles(n.titles), Icon: n.icon, Items: items(id)}
+		s := Section{ID: id, TitleExplicit: n.titleExplicit, Title: n.title, Titles: copyTitles(n.titles), Icon: n.icon, Gradient: n.gradient, Items: items(id)}
 		for _, gid := range l.list(id, groupNode) {
 			g := l.nodes[gid]
 			s.Groups = append(s.Groups, Group{ID: gid, Title: g.title, Titles: copyTitles(g.titles), Icon: g.icon, Items: items(gid)})

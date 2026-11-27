@@ -27,6 +27,7 @@ type navFolder struct {
 }
 
 type navGroup struct {
+	Gradient              bool
 	ID, DOMID, Icon, Kind string
 	LegacyTitle           string // one-time migration of existing collapse preferences
 	Items                 []navItem
@@ -434,7 +435,7 @@ func (s *Server) navigationGroups(r *http.Request, tree, base navigation.Tree, c
 	}
 	var output []navGroup
 	for _, section := range tree.Sections {
-		group := navGroup{ID: section.ID, DOMID: navDOMID(context, section.ID), Icon: section.Icon,
+		group := navGroup{ID: section.ID, DOMID: navDOMID(context, section.ID), Icon: section.Icon, Gradient: section.Gradient,
 			Kind: navigation.DisplayTitle(section.Title, section.Titles, lang), Items: items(section.Items), Open: semantic}
 		original, existed := originals[section.ID]
 		if !configured && existed && !section.TitleExplicit && section.Title == original.Title && maps.Equal(section.Titles, original.Titles) {
