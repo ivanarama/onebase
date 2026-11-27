@@ -97,7 +97,6 @@ var maskHelperExempt = map[string]maskHelperExemption{
 	"dslRefAttrResolver.preloadIDs":        {reason: "наполняет кэш, значения отдаёт только ResolveRefAttr", maskedBy: "dslRefAttrResolver.ResolveRefAttr"},
 	"Server.restoreUnsubmittedFields":      {reason: "дочитывает неприсланные реквизиты ДЛЯ ЗАПИСИ, к клиенту они идут через сериализацию ответа (#609)", maskedBy: "Server.serializeManagedFormEventState"},
 	"Server.refreshFieldsWrittenByHandler": {reason: "перечитывает записанное обработчиком ДЛЯ ЗАПИСИ, к клиенту — через сериализацию ответа (#609)", maskedBy: "Server.serializeManagedFormEventState"},
-	"Server.managedCloseStateDirty":        {reason: "сравнивает серверное состояние с БД и наружу отдаёт только bool; сами поля идут через сериализацию ответа", maskedBy: "Server.serializeManagedFormEventState"},
 	"Server.saveManagedObject":             {reason: "путь записи: GetByID используется только для RLS-предиката, значения клиенту не возвращаются"},
 
 	// ── Особый случай.
