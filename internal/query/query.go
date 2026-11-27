@@ -4921,11 +4921,20 @@ func (tr *translator) dateFieldAt(idx int) bool {
 	if idx < 0 || idx >= len(tr.tokens) || tr.tokens[idx].kind != tIdent {
 		return false
 	}
+	name, qualifier := lowerFast(tr.tokens[idx].val), tr.columnQualifierAt(idx)
 	if tr.registerFieldAt(idx) {
-		typ, _, known := tr.columnTypeAt(idx, lowerFast(tr.tokens[idx].val), tr.columnQualifierAt(idx))
+		typ, _, known := tr.columnTypeAt(idx, name, qualifier)
 		return known && typ == metadata.FieldTypeDate
 	}
-	return tr.colTypes[lowerFast(tr.tokens[idx].val)] == metadata.FieldTypeDate
+	if qualifier != "" && (idx < 3 || tr.tokens[idx-3].kind != tDot) {
+		if scope, ok := tr.sourceCtx.qualifierScopeAt(idx, qualifier); ok && scope.qualifiers[qualifier] == sourceClassEntity {
+			// A qualified column takes its type from its own object source.
+			if typ, _, known := tr.columnTypeAt(idx, name, qualifier); known {
+				return typ == metadata.FieldTypeDate
+			}
+		}
+	}
+	return tr.colTypes[name] == metadata.FieldTypeDate
 }
 
 // Оборачиваем только поле того же прямого сравнения, чей параметр получил
