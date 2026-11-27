@@ -477,7 +477,14 @@ func allSchemas() map[string]map[string]any {
 			"type":                 "object",
 			"required":             []string{"name"},
 			"additionalProperties": true,
-			"properties":           map[string]any{"name": stringSchema("Имя"), "title": stringSchema("Синоним"), "params": arrayOf(param), "query": stringSchema("Текст запроса"), "chart_proc": stringSchema("Процедура диаграммы"), "composition": map[string]any{"type": "object"}},
+			"properties": map[string]any{"name": stringSchema("Имя"), "title": stringSchema("Синоним"), "params": arrayOf(param), "query": stringSchema("Текст запроса"), "chart_proc": stringSchema("Процедура диаграммы"), "composition": map[string]any{"type": "object"}, "variants": arrayOf(map[string]any{
+				"type": "object", "required": []string{"name"}, "properties": map[string]any{
+					"name": stringSchema("Имя варианта"), "query": stringSchema("Запрос варианта; пусто — основной"), "composition": map[string]any{"type": "object"},
+					"filters": arrayOf(map[string]any{"type": "object", "required": []string{"field", "op", "value"}, "properties": map[string]any{
+						"field": stringSchema("Поле результата запроса"), "op": map[string]any{"type": "string", "enum": []string{"eq", "ne", "gt", "ge", "lt", "le"}}, "value": map[string]any{"type": []string{"string", "number", "boolean", "null"}},
+					}}),
+				},
+			})},
 		},
 		"widget": {
 			"$schema":              "https://json-schema.org/draft/2020-12/schema",

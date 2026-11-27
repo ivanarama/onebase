@@ -105,6 +105,8 @@ func (s *Server) reportSettingsForRequest(r *http.Request, rep *reportpkg.Report
 		}
 		if p, err := s.store.GetReportPreset(r.Context(), rep.Name, user, presetID); err == nil && p != nil {
 			if st, err := reportpkg.ParseUserSettings(p.SettingsJSON); err == nil {
+				// The named preset owns its variant. The same form submission
+				// can still carry the previously selected variant.
 				return reportSettingsRequest{Settings: st, ActivePresetID: p.ID}
 			}
 		}
@@ -113,7 +115,7 @@ func (s *Server) reportSettingsForRequest(r *http.Request, rep *reportpkg.Report
 
 	if p, err := s.store.GetDefaultReportPreset(r.Context(), rep.Name, user); err == nil && p != nil {
 		if st, err := reportpkg.ParseUserSettings(p.SettingsJSON); err == nil {
-			return reportSettingsRequest{Settings: st, ActivePresetID: p.ID}
+			return reportSettingsRequest{Settings: reportSettingsWithRequestVariant(r, st), ActivePresetID: p.ID}
 		}
 	}
 

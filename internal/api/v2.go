@@ -411,7 +411,16 @@ func (h *handler) runReportV2() http.HandlerFunc {
 			writeError(w, http.StatusBadRequest, err.Error(), "", 0)
 			return
 		}
-		compiled, err := h.compileQueryWithRowAccess(r.Context(), rep.Query, params)
+		variant := r.URL.Query().Get("variant")
+		if variant == "" {
+			variant = r.URL.Query().Get("__variant")
+		}
+		text, values, err := rep.QueryForVariant(variant, params)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "query compile error: "+err.Error(), "", 0)
+			return
+		}
+		compiled, err := h.compileQueryWithRowAccess(r.Context(), text, values)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "query compile error: "+err.Error(), "", 0)
 			return
@@ -436,10 +445,6 @@ func (h *handler) runReportV2() http.HandlerFunc {
 			if err := maskPlan.Apply(rows); err != nil {
 				writeError(w, http.StatusForbidden, "masked field: "+err.Error(), "", 0)
 				return
-			}
-			variant := r.URL.Query().Get("variant")
-			if variant == "" {
-				variant = r.URL.Query().Get("__variant")
 			}
 			comp := rep.ActiveComposition(variant)
 			if comp == nil {
