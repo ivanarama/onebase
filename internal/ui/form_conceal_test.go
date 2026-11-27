@@ -208,6 +208,41 @@ func concealFixtureWithID(t *testing.T, db *storage.DB, id uuid.UUID) (concealTe
 	return concealTestClient{server: srv, entity: ent, session: uuid.NewString(), user: &auth.User{ID: uuid.NewString(), Login: "operator", IsAdmin: true}}, id
 }
 
+func TestConcealSessionCookiePolicy(t *testing.T) {
+	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
+		c, id := concealFixture(t, db)
+		for _, tc := range []struct {
+			name, scheme  string
+			force, secure bool
+		}{
+			{"http", "http", false, false},
+			{"https", "https", false, true},
+			{"https-proxy", "http", true, true},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				policy := &auth.Handlers{SecureCookies: tc.force}
+				r := chi.NewRouter()
+				c.server.Mount(r.With(policy.SecureCookiePolicy))
+				req := httptest.NewRequest(http.MethodGet, tc.scheme+"://example.test/ui/catalog/"+c.entity.Name+"/"+id.String(), nil)
+				rec := httptest.NewRecorder()
+				r.ServeHTTP(rec, req)
+				if rec.Code != http.StatusOK {
+					t.Fatalf("GET form: HTTP %d", rec.Code)
+				}
+				for _, cookie := range rec.Result().Cookies() {
+					if cookie.Name == "onebase_conceal_session" {
+						if cookie.Secure != tc.secure {
+							t.Errorf("Secure = %t, want %t", cookie.Secure, tc.secure)
+						}
+						return
+					}
+				}
+				t.Fatal("missing conceal session cookie")
+			})
+		}
+	})
+}
+
 func TestManagedFormConcealedField(t *testing.T) {
 	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
 		c, id := concealFixture(t, db)
