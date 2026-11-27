@@ -29,6 +29,7 @@ with open('calls.jsonl', 'a') as f: f.write(json.dumps(args)+'\n')
 if args == ['list', './...']:
     if mode == 'list-failure': sys.exit(2)
     print(other)
+    if os.environ.get('EXTRA_WHOLE_PACKAGE'): print(os.environ['EXTRA_WHOLE_PACKAGE'])
     print(ui if mode != 'missing-ui-package' else 'wrong/ui')
     print(launcher if mode != 'missing-launcher-package' else 'wrong/launcher')
     if mode == 'duplicate-package': print(ui)
@@ -54,7 +55,8 @@ if '-list' in args:
 assert '-covermode=atomic' in args
 coverage = pathlib.Path(next(a.split('=',1)[1] for a in args if a.startswith('-coverprofile=')))
 package = args[-1]
-assert ("-p=2" in args) == (package == other)
+whole_package = package in [other, os.environ.get('EXTRA_WHOLE_PACKAGE')]
+assert ("-p=2" in args) == whole_package
 if package in [ui, launcher]:
     pattern=args[args.index('-run')+1]
     assert pattern.startswith('^(?:') and pattern.endswith(')$') and '/' not in pattern
@@ -76,7 +78,7 @@ if mode != 'missing-package-result': emit('pass', package, Elapsed=0.01)
 if mode == 'event-failure': emit('fail', package)
 if mode == 'missing-profile': sys.exit(0)
 if mode == 'corrupt-profile': coverage.write_text('garbage\n'); sys.exit(0)
-count = int(coverage.stem[-1]) if package != other else 7
+count = 7 if whole_package else int(coverage.stem[-1])
 statements = 2
 file = package+'/sample.go'
 if package == ui and coverage.stem == 'ui-4':

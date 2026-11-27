@@ -242,8 +242,8 @@ func TestCIShardDAGKeepsRequiredBuildFailClosed(t *testing.T) {
 	if race.If != "${{ always() && !cancelled() && needs.unit-plan.result == 'success' && ("+full+") }}" ||
 		!slices.Equal(race.Needs, []string{"classify", "unit-plan"}) ||
 		race.Strategy.FailFast == nil || *race.Strategy.FailFast ||
-		!slices.Equal(race.Strategy.Matrix.Shard, []string{"other", "ui-1", "ui-2", "ui-3", "ui-4", "launcher-1", "launcher-2"}) {
-		t.Fatal("all seven original shards must run without fail-fast or docs/failure bypass")
+		!slices.Equal(race.Strategy.Matrix.Shard, []string{"other", "pipelinehealth", "ui-1", "ui-2", "ui-3", "ui-4", "launcher-1", "launcher-2"}) {
+		t.Fatal("all eight race shards must run without fail-fast or docs/failure bypass")
 	}
 	zones := w.Jobs["timezone-tests"]
 	if zones.If != plan.If || !slices.Equal(zones.Needs, []string{"classify"}) || zones.RunsOn != "ubuntu-latest" ||

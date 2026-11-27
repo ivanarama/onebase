@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Distribute the existing seven race/atomic commands without reusing test results.
+"""Distribute the race/atomic suite without reusing test results.
 
 The plan SHA must come from the planning job output, independently of downloaded
 artifacts. The required build validates every journal/profile again before merge.
@@ -22,7 +22,9 @@ ENGINE = Path(__file__).with_name("test-coverage.py")
 spec = importlib.util.spec_from_file_location("coverage_engine", ENGINE)
 engine = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(engine)
-LABELS = ["other", "ui-1", "ui-2", "ui-3", "ui-4", "launcher-1", "launcher-2"]
+PIPELINEHEALTH = "github.com/ivantit66/onebase/tools/pipelinehealth"
+DEDICATED_PACKAGES = {engine.UI, engine.LAUNCHER, PIPELINEHEALTH}
+LABELS = ["other", "pipelinehealth", "ui-1", "ui-2", "ui-3", "ui-4", "launcher-1", "launcher-2"]
 POSTGRES_UI_SHARDS = [label for label in LABELS if label.startswith("ui-")]
 # The complete pipelinehealth package includes serial public-CLI/process tests.
 # It exceeds 10 minutes with race/atomic coverage; retain a finite package limit
@@ -53,10 +55,9 @@ def validate(plan):
     require(isinstance(packages, list) and packages
             and all(isinstance(p, str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._~/-]*", p)
                     for p in packages), "invalid package inventory")
-    require(len(set(packages)) == len(packages)
-            and all(packages.count(p) == 1 for _, p, _ in engine.SERIES),
-            "duplicate packages or missing exact UI/launcher package")
-    require(set(packages) - {engine.UI, engine.LAUNCHER}, "missing ungrouped packages")
+    require(len(set(packages)) == len(packages) and DEDICATED_PACKAGES.issubset(packages),
+            "duplicate packages or missing exact UI/launcher/pipelinehealth package")
+    require(set(packages) - DEDICATED_PACKAGES, "missing ungrouped packages")
     require(set(plan["series"]) == {label for label, _, _ in engine.SERIES}, "invalid series")
     for label, package, count in engine.SERIES:
         item = plan["series"][label]
@@ -112,7 +113,9 @@ def load(path, expected):
 
 def selection(plan, label):
     if label == "other":
-        return [p for p in plan["packages"] if p not in {engine.UI, engine.LAUNCHER}], None, None
+        return [p for p in plan["packages"] if p not in DEDICATED_PACKAGES], None, None
+    if label == "pipelinehealth":
+        return [PIPELINEHEALTH], None, None
     series, number = label.rsplit("-", 1)
     item = plan["series"][series]
     return [item["package"]], item["groups"][int(number) - 1], series

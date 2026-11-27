@@ -6,8 +6,10 @@ execution and atomic-profile validators through `test-coverage-shards.py`.
 
 The planning job discovers **all** packages plus every top-level Test, Example
 and Fuzz seed suite in UI and launcher. Sorted round-robin partitioning remains
-UI4/launcher2. The seventh shard runs every other package with the existing
-`-p=2`. All seven use `-race -count=1 -timeout=20m -json -covermode=atomic`.
+UI4/launcher2. A dedicated shard runs the entire `tools/pipelinehealth` package.
+The `other` shard runs every remaining package, including newly discovered ones.
+Both whole-package commands use `-p=2`. All eight shards use
+`-race -count=1 -timeout=20m -json -covermode=atomic`.
 The 20-minute timeout applies to each Go package; each CI shard job retains
 its separate 40-minute deadline.
 Fuzz seeds and subtests execute through their parent suite as before.
@@ -16,7 +18,7 @@ Fuzz seeds and subtests execute through their parent suite as before.
 python3 .github/scripts/test-coverage-shards.py plan
 # In CI this digest comes from unit-plan.outputs, independently of artifacts.
 plan_sha=$(sha256sum coverage-plan/plan.json | cut -d' ' -f1)
-for shard in other ui-1 ui-2 ui-3 ui-4 launcher-1 launcher-2; do
+for shard in other pipelinehealth ui-1 ui-2 ui-3 ui-4 launcher-1 launcher-2; do
   python3 .github/scripts/test-coverage-shards.py run \
     --plan coverage-plan/plan.json --plan-sha256 "$plan_sha" \
     --shard "$shard" --artifacts "race-results/$shard"
@@ -27,13 +29,13 @@ python3 .github/scripts/test-coverage-shards.py merge \
 ```
 
 The loop above is a local, sequential reproduction; Actions distributes those
-seven commands to separate machines. The plan binds the actual checkout commit
+eight commands to separate machines. The plan binds the actual checkout commit
 and tree, runner/engine bytes, Go version/OS/architecture/CGO and Node version.
 On PR events the checkout is the synthetic merge commit, **not** the PR head.
 Each consumer checks the externally supplied plan digest and its own context.
 The aggregate rejects missing/extra shards, receipt mismatches, incomplete or
 duplicate test/package results and incompatible atomic block shapes. It sums
-all seven profiles only after validation; a stale output is removed first.
+all eight profiles only after validation; a stale output is removed first.
 
 The stable required `build` context runs with `always()` and requires successful
 planning, all seven race shards and both timezone reruns. The timezone matrix

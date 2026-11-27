@@ -17,7 +17,8 @@ import test_coverage_test as legacy
 
 
 RUNNER = Path(__file__).with_name("test-coverage-shards.py")
-LABELS = ["other", "ui-1", "ui-2", "ui-3", "ui-4", "launcher-1", "launcher-2"]
+PIPELINEHEALTH = "github.com/ivantit66/onebase/tools/pipelinehealth"
+LABELS = ["other", "pipelinehealth", "ui-1", "ui-2", "ui-3", "ui-4", "launcher-1", "launcher-2"]
 FAKE = legacy.FAKE_GO.replace("assert args[0] == 'test'", """
 if args == ['env', '-json', 'GOVERSION', 'GOOS', 'GOARCH', 'CGO_ENABLED']:
     print(json.dumps(dict(GOVERSION='go1.26.10', GOOS='linux', GOARCH='amd64', CGO_ENABLED='1')))
@@ -42,7 +43,8 @@ class ShardCLI(unittest.TestCase):
         go = self.bin / "go"
         go.write_text(FAKE, encoding="utf-8")
         go.chmod(0o755)
-        self.env = dict(os.environ, PATH=str(self.bin) + os.pathsep + os.environ["PATH"])
+        self.env = dict(os.environ, PATH=str(self.bin) + os.pathsep + os.environ["PATH"],
+                        EXTRA_WHOLE_PACKAGE=PIPELINEHEALTH)
         self.git("init", "-q")
         (self.root / "source.txt").write_text("source\n")
         self.git("add", "source.txt")
@@ -92,13 +94,17 @@ class ShardCLI(unittest.TestCase):
         self.assertEqual((self.root / "coverage.out").read_text().splitlines(), [
             "mode: atomic", legacy.LAUNCHER + "/sample.go:1.1,2.2 2 3",
             legacy.UI + "/sample.go:1.1,2.2 2 10",
-            "github.com/ivantit66/onebase/other/sample.go:1.1,2.2 2 7"])
+            "github.com/ivantit66/onebase/other/sample.go:1.1,2.2 2 7",
+            PIPELINEHEALTH + "/sample.go:1.1,2.2 2 7"])
         calls = [json.loads(line) for line in (self.root / "calls.jsonl").read_text().splitlines()]
         tests = [call for call in calls if call[0] == "test" and "-list" not in call]
-        self.assertEqual(len(tests), 7)
-        self.assertEqual([call[-1] for call in tests], ["github.com/ivantit66/onebase/other"] + [legacy.UI]*4 + [legacy.LAUNCHER]*2)
+        self.assertEqual(len(tests), 8)
+        self.assertEqual([call[-1] for call in tests],
+                         ["github.com/ivantit66/onebase/other", PIPELINEHEALTH] + [legacy.UI]*4 + [legacy.LAUNCHER]*2)
+        self.assertEqual(sum(call.count(PIPELINEHEALTH) for call in tests), 1)
+        self.assertNotIn("-run", tests[1])
         self.assertTrue(all(all(flag in call for flag in ["-race", "-count=1", "-timeout=20m", "-json", "-covermode=atomic"]) for call in tests))
-        self.assertEqual(sum("-p=2" in call for call in tests), 1)
+        self.assertEqual(sum("-p=2" in call for call in tests), 2)
 
     def test_authoritative_hash_and_source(self):
         result = self.merge(ok=False, plan_sha="0"*64)
@@ -116,7 +122,7 @@ class ShardCLI(unittest.TestCase):
                 shutil.rmtree(self.results)
                 shutil.copytree(saved, self.results)
                 if mode == "missing":
-                    shutil.rmtree(self.results / "ui-1")
+                    shutil.rmtree(self.results / "pipelinehealth")
                 elif mode == "extra":
                     shutil.copytree(self.results / "ui-1", self.results / "ui-5")
                 else:
@@ -130,6 +136,13 @@ class ShardCLI(unittest.TestCase):
         self.plan.write_text(json.dumps(plan))
         self.merge(ok=False)
         self.assertIn("partition", self.merge(ok=False, plan_sha=digest(self.plan)).stderr)
+
+    def test_plan_requires_exact_pipelinehealth_package(self):
+        plan = json.loads(self.plan.read_bytes())
+        plan["packages"].remove(PIPELINEHEALTH)
+        self.plan.write_text(json.dumps(plan))
+        self.assertIn("missing exact UI/launcher/pipelinehealth package",
+                      self.merge(ok=False, plan_sha=digest(self.plan)).stderr)
 
     def test_receipt_context_and_profile_shape(self):
         receipt = self.results / "other/receipt.json"
@@ -193,7 +206,8 @@ class ContextMismatchCLI(unittest.TestCase):
             names = ["Test" + name for name in ("Alpha", "Bravo", "Charlie", "Delta")]
             series[label] = dict(package=package, names=names, groups=[names[i::count] for i in range(count)])
         self.plan = dict(schema="race-coverage-plan-v1", context=self.current,
-                         packages=["github.com/ivantit66/onebase/other", legacy.UI, legacy.LAUNCHER], series=series)
+                         packages=["github.com/ivantit66/onebase/other", PIPELINEHEALTH, legacy.UI, legacy.LAUNCHER],
+                         series=series)
 
     def reject(self, expected):
         self.plan["context"] = expected
@@ -332,7 +346,7 @@ class RealGoCLI(unittest.TestCase):
         self.env = dict(os.environ, GOWORK="off", GOPROXY="off", GOSUMDB="off")
         self.git("init", "-q")
         self.root.joinpath("go.mod").write_text("module github.com/ivantit66/onebase\n\ngo 1.26.0\n")
-        for package in ("internal/ui", "internal/launcher", "other"):
+        for package in ("internal/ui", "internal/launcher", "tools/pipelinehealth", "other"):
             directory = self.root / package
             directory.mkdir(parents=True)
             name = directory.name
@@ -353,8 +367,8 @@ func FuzzSeed(f *testing.F) { f.Add(1); f.Fuzz(func(t *testing.T, n int) { if Va
     def test_actual_go_suites_seeds_subtests_and_atomic_merge(self):
         self.prepare()
         self.merge()
-        for label in ("ui", "launcher"):
-            rows = [json.loads(line) for shard in self.results.glob(label + "-*")
+        for pattern in ("ui-*", "launcher-*", "pipelinehealth"):
+            rows = [json.loads(line) for shard in self.results.glob(pattern)
                     for line in (shard / "tests.jsonl").read_text().splitlines()]
             ran = [r["Test"] for r in rows if r.get("Action") == "run"]
             self.assertEqual(len(ran), len(set(ran)))
