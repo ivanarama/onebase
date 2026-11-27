@@ -63,7 +63,7 @@ func checkNavigation(p *project.Project, warnings bool) []Issue {
 		for _, d := range diagnostics {
 			if d.Warning == warnings {
 				issues = append(issues, Issue{File: file, Object: name, Kind: "Навигация", Code: d.Code, Message: d.Node + ": " + d.Message,
-					SuggestedFix: "Исправьте menu: стабильные уникальные id, typed target из contents/nav, не более трёх уровней."})
+					SuggestedFix: "Исправьте menu: стабильные уникальные id, typed target из contents/nav, не более восьми папок до команды."})
 			}
 		}
 	}

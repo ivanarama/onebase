@@ -2012,10 +2012,12 @@ const tplNav = `
 </nav>
 {{end}}
 <div class="app-body">
+<script src="/static/navigation-tree.js" defer></script>
 <aside id="ob-nav">
   {{if not .Subsystems}}<a href="/ui/" style="display:block;padding:12px 14px 8px;color:#7dd3fc;font-weight:700;font-size:15px;text-decoration:none">{{t $.Lang "Главная"}}</a>{{end}}
   {{if .CollapsibleNav}}
   {{range .Nav}}
+  {{if .Recursive}}{{template "nav-recursive-section" .}}{{else}}
   <details class="navsec" id="{{.DOMID}}" data-nav-id="{{.ID}}" data-navsec="{{.DOMID}}"{{if .LegacyTitle}} data-navsec-legacy="{{.LegacyTitle}}"{{end}}{{if .Open}} open{{end}}>
     <summary>{{lucideIcon .Icon}}{{.Kind}}</summary>
     {{template "nav-items" .Items}}
@@ -2026,18 +2028,32 @@ const tplNav = `
     </details>
     {{end}}
   </details>
-  {{end}}
+  {{end}}{{end}}
   {{else}}
   {{range .Nav}}
+  {{if .Recursive}}{{template "nav-recursive-section" .}}{{else}}
   <div class="sec" id="{{.DOMID}}" data-nav-id="{{.ID}}">{{lucideIcon .Icon}}{{.Kind}}</div>
   {{template "nav-items" .Items}}
   {{range .Groups}}
   <div class="sec navfolder-title" id="{{.DOMID}}" data-nav-id="{{.ID}}">{{lucideIcon .Icon}}{{.Kind}}</div>
   <div class="navfolder-items">{{template "nav-items" .Items}}</div>
-  {{end}}{{end}}
+  {{end}}{{end}}{{end}}
   {{end}}
 </aside>
 {{end}}
+{{define "nav-recursive-section"}}
+<details class="navtree navtree-section" id="{{.DOMID}}" data-nav-id="{{.ID}}" data-nav-key="{{.CollapseKey}}" open>
+<summary aria-expanded="true">{{lucideIcon .Icon}}{{.Kind}}</summary>
+{{template "nav-recursive-nodes" .Nodes}}
+</details>
+{{end}}
+{{define "nav-recursive-nodes"}}{{range .}}
+{{if .URL}}<a href="{{.URL}}" title="{{.Label}}" id="{{.DOMID}}" data-nav-id="{{.ID}}">{{lucideIcon .Icon}}{{navLabel .Label}}</a>
+{{else}}<details class="navtree navtree-folder" id="{{.DOMID}}" data-nav-id="{{.ID}}" data-nav-key="{{.CollapseKey}}" open>
+<summary aria-expanded="true">{{lucideIcon .Icon}}{{.Label}}</summary>
+{{template "nav-recursive-nodes" .Nodes}}
+</details>{{end}}
+{{end}}{{end}}
 {{define "nav-items"}}{{range .}}<a href="{{.URL}}" title="{{.Label}}" id="{{.DOMID}}" data-nav-id="{{.ID}}">{{lucideIcon .Icon}}{{navLabel .Label}}</a>
 {{end}}{{end}}
 `

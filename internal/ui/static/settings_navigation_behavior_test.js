@@ -6,7 +6,7 @@ const vm = require('node:vm');
 const source = fs.readFileSync(path.join(__dirname, 'settings-navigation.js'), 'utf8');
 
 class Element {
-  constructor(tag) {this.tagName = tag; this.children = []; this.dataset = {}; this.events = {}; this.value = ''; this.textContent = ''; this.disabled = false;}
+  constructor(tag) {this.style={};this.tagName = tag; this.children = []; this.dataset = {}; this.events = {}; this.value = ''; this.textContent = ''; this.disabled = false;}
   appendChild(child) {this.children.push(child); child.parent = this; return child;}
   replaceChildren() {this.children = [];}
   addEventListener(name, fn) {(this.events[name] ||= []).push(fn);}
@@ -273,4 +273,33 @@ test('palette counts all unplaced nodes before filtering and restores a hidden s
   palette.all().find(x => x.dataset.restoreId === 'cfg:study').click();
   assert.equal(palette.children[0].textContent, 'All objects placed');
   assert.deepEqual(ui.state().sections.find(x => x.id === 'cfg:study').groups[0].items.map(x => x.id), ['cfg:a','cfg:b']);
+});
+
+function recursiveSetup() {
+ return setup('complete',data=>{
+  const item=id=>({id:'cfg:'+id,target:'catalog:'+id,object:{title:id}});
+  data.base={version:2,context:'subsystem:School',sections:[{id:'cfg:root',title:'Root',nodes:[item('direct'),{id:'cfg:folder',title:'Folder',nodes:[{id:'cfg:deep',title:'Deep',nodes:[item('a'),item('b')]}]},item('last')]}]};
+  data.desired=data.base;
+ });
+}
+test('recursive production controller keeps mixed siblings and arbitrary-depth keyboard moves',()=>{
+ const ui=recursiveSetup();
+ ui.control('cfg:folder','up').click();
+ assert.deepEqual(ui.state().sections[0].nodes.map(n=>n.id),['cfg:folder','cfg:direct','cfg:last']);
+ ui.row('cfg:b').fire('keydown',{altKey:true,key:'ArrowLeft'});
+ assert.deepEqual(ui.state().sections[0].nodes[0].nodes.map(n=>n.id),['cfg:deep','cfg:b']);
+ ui.control('cfg:b','in').click();
+ assert.deepEqual(ui.state().sections[0].nodes[0].nodes[0].nodes.map(n=>n.id),['cfg:a','cfg:b']);
+});
+test('recursive hide/restore and nested custom folders retain every descendant without duplicates',()=>{
+ const ui=recursiveSetup();
+ ui.row('cfg:folder').children.at(-1).click();
+ const restore=ui.elements['navigation-palette'].all().find(n=>n.dataset.restoreId==='cfg:folder');restore.click();
+ assert.deepEqual(ui.state().sections[0].nodes.at(-1).nodes[0].nodes.map(n=>n.id),['cfg:a','cfg:b']);
+ ui.choose('cfg:deep');ui.elements['navigation-add-group'].click();
+ const nested=ui.state().sections[0].nodes.at(-1).nodes[0].nodes.at(-1);
+ assert.ok(nested.id.startsWith('new:'));assert.deepEqual(nested.nodes,[]);
+ ui.choose('cfg:folder');
+ const parentSelect=ui.elements['navigation-properties'].children.at(-1).children[0];
+ assert.deepEqual(parentSelect.children.map(n=>n.value),['cfg:root']);
 });

@@ -32,6 +32,9 @@ type navGroup struct {
 	Items                 []navItem
 	Groups                []navFolder
 	Open                  bool
+	Nodes                 []navTreeNode
+	Recursive             bool
+	CollapseKey           string
 }
 
 func sortNavItems(items []navItem) {
@@ -105,16 +108,7 @@ func (s *Server) homeConfigurationNavigationForRoles(roles []string) (navigation
 	}
 	scoped := s.roleNavigation(contents)
 	placed := map[string]bool{}
-	for _, section := range base.Sections {
-		for _, item := range section.Items {
-			placed[item.Target] = true
-		}
-		for _, group := range section.Groups {
-			for _, item := range group.Items {
-				placed[item.Target] = true
-			}
-		}
-	}
+	navigation.WalkItems(base, func(item navigation.Item) { placed[item.Target] = true })
 	// Supply targets present only in nav_by_role before composing layers. Do
 	// not append after composition: that would resurrect common hidden items.
 	for _, section := range scoped.Sections {
@@ -133,13 +127,26 @@ func (s *Server) homeConfigurationNavigationForRoles(roles []string) (navigation
 		found := false
 		for i := range base.Sections {
 			if base.Sections[i].ID == section.ID {
-				base.Sections[i].Items = append(base.Sections[i].Items, extra...)
+				if base.Version == 2 {
+					for _, item := range extra {
+						base.Sections[i].Nodes = append(base.Sections[i].Nodes, navigation.Node{Item: item})
+					}
+				} else {
+					base.Sections[i].Items = append(base.Sections[i].Items, extra...)
+				}
 				found = true
 				break
 			}
 		}
 		if !found {
-			section.Items = extra
+			if base.Version == 2 {
+				section.Items = nil
+				for _, item := range extra {
+					section.Nodes = append(section.Nodes, navigation.Node{Item: item})
+				}
+			} else {
+				section.Items = extra
+			}
 			base.Sections = append(base.Sections, section)
 		}
 	}
@@ -165,6 +172,9 @@ func (s *Server) navigationHomePage(sub string) *metadata.HomePage {
 // читает ради ссылок (кладовщику — заказы из ордера), а в меню ему не место.
 func (s *Server) projectRoleNavigation(r *http.Request, hp *metadata.HomePage, tree navigation.Tree) navigation.Tree {
 	allowed := s.roleNavigationTargets(r, hp)
+	if tree.Version == 2 {
+		return s.projectRecursiveNavigation(r, tree, allowed, false, nil)
+	}
 	if allowed == nil {
 		return tree
 	}
@@ -208,16 +218,7 @@ func (s *Server) roleNavigationTargets(r *http.Request, hp *metadata.HomePage) m
 		return nil
 	}
 	allowed := map[string]bool{}
-	for _, section := range scoped.Sections {
-		for _, item := range section.Items {
-			allowed[item.Target] = true
-		}
-		for _, group := range section.Groups {
-			for _, item := range group.Items {
-				allowed[item.Target] = true
-			}
-		}
-	}
+	navigation.WalkItems(scoped, func(item navigation.Item) { allowed[item.Target] = true })
 	return allowed
 }
 
@@ -405,6 +406,9 @@ func (s *Server) personalNavigationLayer(r *http.Request, base navigation.Tree) 
 }
 
 func (s *Server) navigationGroups(r *http.Request, tree, base navigation.Tree, configured, flat bool, sub string) []navGroup {
+	if tree.Version == 2 {
+		return s.recursiveNavigationGroups(r, tree, sub)
+	}
 	context := base.Context
 	baseHash, _ := base.Hash()
 	treeHash, _ := tree.Hash()
@@ -482,6 +486,7 @@ type NavigationPreviewSection struct {
 	Icon   string                   `json:"icon,omitempty"`
 	Items  []NavigationPreviewItem  `json:"items"`
 	Groups []NavigationPreviewGroup `json:"groups"`
+	Nodes  []NavigationPreviewNode  `json:"nodes,omitempty"`
 }
 
 // AdminNavigationPreview renders a configurator draft through the production
@@ -509,6 +514,7 @@ func navigationPreview(groups []navGroup) []NavigationPreviewSection {
 		for _, group := range section.Groups {
 			next.Groups = append(next.Groups, NavigationPreviewGroup{ID: group.ID, Title: group.Kind, Icon: group.Icon, Items: items(group.Items)})
 		}
+		next.Nodes = recursiveNavigationPreview(section.Nodes)
 		out = append(out, next)
 	}
 	return out

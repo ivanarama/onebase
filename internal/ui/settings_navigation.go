@@ -234,6 +234,9 @@ func allocateNavigationContainers(base, effective navigation.Tree, desired *navi
 }
 
 func allocateNavigationContainersForLayer(base, effective navigation.Tree, desired *navigation.Tree, layer navigation.Layer) error {
+	if desired.Version == 2 {
+		return allocateRecursiveNavigationContainers(base, effective, desired, layer)
+	}
 	existing := map[string]string{}
 	for _, tree := range []navigation.Tree{base, effective} {
 		for _, section := range tree.Sections {
