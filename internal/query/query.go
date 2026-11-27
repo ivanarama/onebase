@@ -1140,11 +1140,12 @@ type translator struct {
 	derivedAs           map[int]string    // позиция закрывающей скобки → отложенный AS простой ссылки
 	mainRef             mainRefSource     // главный источник запроса: чья ссылка стоит за голым «Ссылка»
 
-	joinedRefs      []joinedRefSource // ссылочные поля присоединённых источников (#1385)
-	pendingRefJoins []pendingRefJoin  // авто-JOIN присоединённых источников ждут конца ПО
-	onSourceAliases map[int]string    // текущий источник ПО каждого SELECT
-	columnSources   map[int][]columnSource
-	textComparisons map[int]bool
+	joinedRefs       []joinedRefSource // ссылочные поля присоединённых источников (#1385)
+	pendingRefJoins  []pendingRefJoin  // авто-JOIN присоединённых источников ждут конца ПО
+	onSourceAliases  map[int]string    // текущий источник ПО каждого SELECT
+	columnSources    map[int][]columnSource
+	textComparisons  map[int]bool
+	mixedDateColumns map[int]bool // direct SQLite comparisons between object and register dates
 }
 
 // pendingRefJoin — отложенный авто-JOIN с глубиной скобок своего SELECT-scope:
@@ -4928,9 +4929,12 @@ func (tr *translator) dateFieldAt(idx int) bool {
 	return tr.colTypes[lowerFast(tr.tokens[idx].val)] == metadata.FieldTypeDate
 }
 
-// Оборачиваем только поле того же прямого сравнения, чей параметр получил
-// ob_utc_datetime. SELECT/ORDER BY и сравнения строк не меняют представление.
+// Общий ключ даты нужен при прямом сравнении регистра с параметром-моментом
+// или с датой объекта, записанной в другом формате SQLite.
 func (tr *translator) sqliteRegisterDateComparisonAt(idx int) bool {
+	if tr.mixedDateColumns[idx] {
+		return true
+	}
 	if !tr.dateFieldAt(idx) || !tr.registerFieldAt(idx) {
 		return false
 	}
@@ -6224,6 +6228,10 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 	tr.initSelectStates()
 	tr.assignRefJoinAliases()
 	tr.columnSources = indexColumnSources(tokens, opts, tr.sourceCtx)
+	hasRegister := len(opts.InfoRegs)+len(opts.Registers)+len(opts.AccountRegs) > 0
+	if hasRegister && len(opts.Entities) > 0 && dialectOrDefault(opts.Dialect).Name() == "sqlite" {
+		tr.mixedDateColumns = tr.sqliteMixedDateColumns()
+	}
 	tr.textComparisons = scalarTextComparisons(tokens, tr.sourceCtx)
 	tr.textEqIndex = positiveTextEqualities(tokens, tr.sourceCtx)
 	for {
