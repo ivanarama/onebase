@@ -1150,7 +1150,7 @@ function renderProps() {
       addChoiceFilterEditor(panel, info);
     }
   }
-  if (info.kind === 'ГруппаФормы' || info.kind === 'Кнопка') {
+  if (info.supportsBackground) {
     addTextProp(panel, {{jsString (t $.Lang "Фон (CSS-цвет)")}}, 'background', info.background || '');
   }
   if (info.kind === 'ГруппаФормы') {
@@ -1885,7 +1885,7 @@ func renderPreviewElement(buf *bytes.Buffer, el *metadata.FormElement, tabsCount
 		setID := *tabsCounter
 		*tabsCounter++
 		// Заголовки вкладок.
-		fmt.Fprintf(buf, `<div class="tabs"%s><div class="tabs-hd" data-tabset-hdr="%d">`, layoutStyleAttr(el), setID)
+		fmt.Fprintf(buf, `<div class="tabs"%s><div class="tabs-hd" data-tabset-hdr="%d">`, groupStyleAttr(el), setID)
 		pageIdx := 0
 		for _, p := range el.Children {
 			if p.Kind != metadata.FormElementPage {

@@ -132,7 +132,7 @@ func TestConfiguratorButtonBackground_HTTPRoundTrip(t *testing.T) {
 				if code != http.StatusOK || !strings.Contains(raw, `"Background (CSS color)", 'background', info.background`) {
 					t.Fatalf("reloaded editor/localized property missing: %d", code)
 				}
-				if !strings.Contains(raw, "info.kind === 'ГруппаФормы' || info.kind === 'Кнопка'") {
+				if !edited.Model["elements.0"].SupportsBackground {
 					t.Fatal("button background property unavailable")
 				}
 				code, raw = call(t, http.MethodPost, "preview", url.Values{"entity": {"Звонок"}, "yaml": {edited.YAML}})

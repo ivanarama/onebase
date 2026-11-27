@@ -71,6 +71,20 @@ func TestConfiguratorFormsEditOp_HTTP(t *testing.T) {
 // canvas -> сохранение через HTTP -> повторная загрузка metadata -> preview.
 // Это защищает не отдельный helper, а пользовательский round-trip background.
 func TestConfiguratorFormBackground_HTTPRoundTrip(t *testing.T) {
+	const pages = `schema: onebase.form/v1
+form: {name: ФормаОбъекта, kind: object, entity: Звонок}
+elements:
+  - kind: СтраницыФормы
+    name: Закладки
+    children:
+      - {kind: Страница, name: Главная}
+`
+	t.Run("ГруппаФормы", func(t *testing.T) { testFormBackgroundRoundTrip(t, canvasSample) })
+	t.Run("СтраницыФормы", func(t *testing.T) { testFormBackgroundRoundTrip(t, pages) })
+}
+
+func testFormBackgroundRoundTrip(t *testing.T, source string) {
+	t.Helper()
 	storeDir := t.TempDir()
 	configDir := t.TempDir()
 	s := &Store{path: filepath.Join(storeDir, "ibases.yaml")}
@@ -85,7 +99,7 @@ func TestConfiguratorFormBackground_HTTPRoundTrip(t *testing.T) {
 		"node":  {"elements.0"},
 		"key":   {"background"},
 		"value": {"rgba(12, 34, 56, .5)"},
-		"yaml":  {canvasSample},
+		"yaml":  {source},
 	}
 	editReq := httptest.NewRequest(http.MethodPost, "/bases/"+b.ID+"/configurator/forms/edit-op", strings.NewReader(editForm.Encode()))
 	editReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")

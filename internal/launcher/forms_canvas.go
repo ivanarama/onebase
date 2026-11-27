@@ -103,7 +103,7 @@ func renderCanvasElement(buf *bytes.Buffer, en *formdoc.ElementNode, selectedID 
 
 	case metadata.FormElementPages:
 		fmt.Fprintf(buf, `<div class="%s" data-node-id="%s" data-kind="%s"%s>`,
-			elWrapClass("fc-pages", id, selectedID), id, kind, layoutStyleAttr(el))
+			elWrapClass("fc-pages", id, selectedID), id, kind, groupStyleAttr(el))
 		for i, p := range en.Children {
 			renderPageDropZone(buf, id, i)
 			if p == nil || p.El == nil {
@@ -271,10 +271,9 @@ type canvasElementInfo struct {
 	// Orientation — раскладка детей контейнера: ""/"vertical" или "horizontal".
 	Orientation  string `json:"orientation"`
 	EqualColumns bool   `json:"equalColumns"`
-	// Background — безопасный CSS-цвет фона ГруппаФормы и Кнопка. В модель передаётся
-	// исходное значение: панель редактирует YAML, а canvas/preview применяют
-	// его только через FormElementBackgroundCSS.
-	Background string `json:"background"`
+	// Панель редактирует исходное значение, холст и предпросмотр применяют FormElementBackgroundCSS.
+	Background         string `json:"background"`
+	SupportsBackground bool   `json:"supportsBackground"`
 	// События элемента (batch B1): имя события → имя процедуры в .form.os.
 	Events map[string]string `json:"events"`
 	// Набор значений Переключателя/ПолеСписка (batch C1).
@@ -343,6 +342,8 @@ func canvasModel(doc *formdoc.Doc) (map[string]canvasElementInfo, error) {
 				EqualColumns: el.EqualColumns,
 				Background:   el.Background,
 				View:         el.View,
+
+				SupportsBackground: metadata.FormElementSupportsBackground(el.Kind),
 			}
 			if el.TitleMap != nil {
 				info.TitleRU = el.TitleMap["ru"]
