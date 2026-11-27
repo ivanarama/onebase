@@ -37,12 +37,11 @@ The aggregate rejects missing/extra shards, receipt mismatches, incomplete or
 duplicate test/package results and incompatible atomic block shapes. It sums
 all eight profiles only after validation; a stale output is removed first.
 
-The stable required `build` context runs with `always()` and explicitly requires
-successful planning and the entire matrix. Cancelled, failed, skipped or absent
-full-suite shards cannot produce green `build`. Successful docs classification
-alone expects skipped unit jobs; classification failure runs the full path.
-All other build checks, both complete timezone reruns and the required-context
-list remain unchanged. The manual emergency workflow dispatch is retained.
+The stable required `build` context runs with `always()` and requires successful
+planning, all seven race shards and both timezone reruns. The timezone matrix
+starts after classification and can run alongside planning and race. Each zone
+runs all four packages with `-count=1`. A successful docs classification
+expects all three job results to be skipped. A classifier failure runs full CI.
 
 The race jobs cache only module downloads and compiled Go objects in private
 runner directories. They do not cache journals, profiles or test verdicts.

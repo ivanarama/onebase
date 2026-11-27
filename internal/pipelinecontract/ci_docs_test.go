@@ -33,7 +33,7 @@ type docsCIJob struct {
 	Services map[string]struct{ Image string }
 	Strategy struct {
 		FailFast *bool `yaml:"fail-fast"`
-		Matrix   struct{ Shard []string }
+		Matrix   struct{ Shard, Timezone []string }
 	}
 	Steps []struct {
 		ID   string
@@ -74,7 +74,7 @@ func TestCIDocsRequiredStatusesAndFallback(t *testing.T) {
 	lightBuild := map[string]bool{
 		"actions/checkout@v4": true, "actions/setup-go@v5": true,
 		"Check for UTF-8 BOM in .go files": true, "Plan numbers are unique": true,
-		"Require every race shard": true, // A small result gate, not a test/workload bypass.
+		"Require race and timezone tests": true, // A small result gate, not a test/workload bypass.
 	}
 	for _, id := range append(branchProtectionContexts(t), "smoke_matrix", "bench") {
 		job, ok := w.Jobs[id]
@@ -245,17 +245,22 @@ func TestCIShardDAGKeepsRequiredBuildFailClosed(t *testing.T) {
 		!slices.Equal(race.Strategy.Matrix.Shard, []string{"other", "pipelinehealth", "ui-1", "ui-2", "ui-3", "ui-4", "launcher-1", "launcher-2"}) {
 		t.Fatal("all eight race shards must run without fail-fast or docs/failure bypass")
 	}
-	if build.If != "${{ always() }}" || !slices.Equal(build.Needs, []string{"classify", "unit-plan", "unit-race"}) {
+	zones := w.Jobs["timezone-tests"]
+	if zones.If != plan.If || !slices.Equal(zones.Needs, []string{"classify"}) || zones.RunsOn != "ubuntu-latest" ||
+		zones.Strategy.FailFast == nil || *zones.Strategy.FailFast ||
+		!slices.Equal(zones.Strategy.Matrix.Timezone, []string{"Asia/Kolkata", "America/New_York"}) {
+		t.Fatal("both timezones must run independently of race on full CI, including classifier failure")
+	}
+	if build.If != "${{ always() }}" || !slices.Equal(build.Needs, []string{"classify", "unit-plan", "unit-race", "timezone-tests"}) {
 		t.Fatal("required build must observe failed, missing, skipped and cancelled shard jobs")
 	}
 	gateFound, mergeFound, runFound := false, false, false
 	for _, step := range build.Steps {
-		if step.Name == "Require every race shard" {
+		if step.Name == "Require race and timezone tests" {
 			gateFound = step.If == "" &&
 				step.Env["DOCS"] == "${{ needs.classify.result == 'success' && needs.classify.outputs.mode == 'docs' }}" &&
 				step.Env["PLAN_RESULT"] == "${{ needs.unit-plan.result }}" && step.Env["RACE_RESULT"] == "${{ needs.unit-race.result }}" &&
-				strings.Contains(step.Run, `test "$PLAN_RESULT" = success && test "$RACE_RESULT" = success`) &&
-				strings.Contains(step.Run, `test "$PLAN_RESULT" = skipped && test "$RACE_RESULT" = skipped`)
+				step.Env["TIMEZONE_RESULT"] == "${{ needs.timezone-tests.result }}"
 		}
 		if step.Name == "Validate all journals and merge atomic coverage" {
 			mergeFound = step.If == "${{ "+full+" }}" && step.Env["PLAN_SHA"] == "${{ needs.unit-plan.outputs.plan-sha256 }}" &&
