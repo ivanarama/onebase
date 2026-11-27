@@ -28,6 +28,9 @@ type Param struct {
 	// хранят время суток, и «Дата <= &По» с полночью теряло всё, что было в этот
 	// день после 00:00.
 	PeriodEnd bool `yaml:"period_end"`
+	// VisibleWhen controls presentation only. Hidden values remain independent
+	// and are still submitted/validated; the server query chooses its own bounds.
+	VisibleWhen *ParamVisibility `yaml:"visible_when,omitempty"`
 }
 
 type Report struct {

@@ -539,10 +539,12 @@ func applyResolvedLabels(rows []map[string]any, uuidToLabel map[string]string, s
 
 // reportParamUI is a template-friendly wrapper around a report parameter.
 type reportParamUI struct {
-	Name   string
-	Label  string
-	Type   string // raw type string
-	IsDate bool
+	VisibleWhen *reportpkg.ParamVisibility
+	Hidden      bool
+	Name        string
+	Label       string
+	Type        string // raw type string
+	IsDate      bool
 	// IsDateTime — тип datetime: поле принимает время суток, а не только дату.
 	IsDateTime bool
 	IsNum      bool
@@ -561,9 +563,11 @@ func (s *Server) buildReportParams(ctx context.Context, lang string, params []re
 	out := make([]reportParamUI, 0, len(params))
 	for _, p := range params {
 		ui := reportParamUI{
-			Name:  p.Name,
-			Label: p.DisplayLabel(lang),
-			Type:  p.Type,
+			VisibleWhen: p.VisibleWhen,
+			Hidden:      !reportpkg.ParamVisible(params, p, values),
+			Name:        p.Name,
+			Label:       p.DisplayLabel(lang),
+			Type:        p.Type,
 		}
 		switch {
 		case p.Type == "date":

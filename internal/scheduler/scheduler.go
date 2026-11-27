@@ -1344,6 +1344,10 @@ func resolveTemplate(s string, now time.Time, res ConstantResolver) (any, error)
 		return t.Add(-time.Duration(n) * time.Hour), nil
 	case "minus_months":
 		return t.AddDate(0, -n, 0), nil
+	case "start_of_day":
+		return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location()), nil
+	case "end_of_day":
+		return time.Date(t.Year(), t.Month(), t.Day(), 23, 59, 59, 0, t.Location()), nil
 	case "start_of_month":
 		return time.Date(t.Year(), t.Month(), 1, 0, 0, 0, 0, t.Location()), nil
 	case "end_of_month":

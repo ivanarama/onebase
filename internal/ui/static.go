@@ -22,12 +22,16 @@ var queryBuilderJS []byte
 //go:embed static/settings-navigation.js
 var settingsNavigationJS []byte
 
+//go:embed static/report_params.js
+var reportParamsJS []byte
+
 // ETag'и приложенческого JS считаются один раз при старте по содержимому.
 var (
 	uiJSETag                 = assetETag(uiJS)
 	managedJSETag            = assetETag(managedJS)
 	queryBuilderJSETag       = assetETag(queryBuilderJS)
 	settingsNavigationJSETag = assetETag(settingsNavigationJS)
+	reportParamsJSETag       = assetETag(reportParamsJS)
 )
 
 func assetETag(b []byte) string {
@@ -58,6 +62,9 @@ func serveAppJS(w http.ResponseWriter, r *http.Request, body []byte, etag string
 // тем же путём, что и в конфигураторе лаунчера, чтобы рабочий стол и
 // предпросмотр виджетов рисовались идентично.
 func mountStatic(r chi.Router) {
+	r.Get("/static/report_params.js", func(w http.ResponseWriter, req *http.Request) {
+		serveAppJS(w, req, reportParamsJS, reportParamsJSETag)
+	})
 	r.Get("/static/settings-navigation.js", func(w http.ResponseWriter, req *http.Request) {
 		serveAppJS(w, req, settingsNavigationJS, settingsNavigationJSETag)
 	})
