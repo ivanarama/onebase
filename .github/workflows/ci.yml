@@ -164,24 +164,53 @@ jobs:
           if-no-files-found: error
           retention-days: 2
 
+  # В Калькутте смещение +05:30 выявляет ошибки округления часа (#962),
+  # а в Нью-Йорке полночь UTC приходится на предыдущий день (#1212).
+  timezone-tests:
+    needs: [classify]
+    if: ${{ always() && !cancelled() && (needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        timezone: [Asia/Kolkata, America/New_York]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: '.go-version'
+          cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.RACE_NODE_VERSION }}
+      - name: Unit tests
+        env:
+          TZ: ${{ matrix.timezone }}
+        run: go test -count=1 ./internal/storage/ ./internal/query/ ./internal/entityservice/ ./internal/ui/
+
   build:
-    needs: [classify, unit-plan, unit-race]
+    needs: [classify, unit-plan, unit-race, timezone-tests]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      # Required stable context. Skipped/cancelled/failed/missing shards fail closed.
-      - name: Require every race shard
+      - name: Require race and timezone tests
         env:
           DOCS: ${{ needs.classify.result == 'success' && needs.classify.outputs.mode == 'docs' }}
           PLAN_RESULT: ${{ needs.unit-plan.result }}
           RACE_RESULT: ${{ needs.unit-race.result }}
+          TIMEZONE_RESULT: ${{ needs.timezone-tests.result }}
         run: |
+          expected=success
           if [ "$DOCS" = true ]; then
-            test "$PLAN_RESULT" = skipped && test "$RACE_RESULT" = skipped
-          else
-            test "$PLAN_RESULT" = success && test "$RACE_RESULT" = success
+            expected=skipped
           fi
+          for result in "$PLAN_RESULT" "$RACE_RESULT" "$TIMEZONE_RESULT"; do
+            test "$result" = "$expected" || exit 1
+          done
       - name: Docs-only success
         if: ${{ needs.classify.result == 'success' && needs.classify.outputs.mode == 'docs' }}
         run: echo "Documentation diff; full CI steps are unnecessary."
@@ -457,27 +486,6 @@ jobs:
           python3 .github/scripts/test-coverage-shards.py merge \
             --plan coverage-plan/plan.json --plan-sha256 "$PLAN_SHA" \
             --artifacts race-results --artifact-prefix "$ARTIFACT_PREFIX" --output coverage.out
-
-      # Раннеры работают в UTC, поэтому целый класс дефектов «время
-      # канонизируется не в той зоне» для CI невидим: #945 поймали случайно, на
-      # локальном прогоне в Europe/Moscow. Прогоняем пакеты, где время
-      # обрабатывается, ещё раз в зоне, которая ловит больше — +05:30 отличается
-      # от UTC и смещением, и получасом, так что промахи на границе суток и
-      # округлении часа видны сразу. Москвы для этого мало: тест, красный в
-      # Дубае и Индии, в ней остаётся зелёным (#962).
-      - name: Unit tests (восточная зона)
-        if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
-        env:
-          TZ: Asia/Kolkata
-        run: go test -count=1 ./internal/storage/ ./internal/query/ ./internal/entityservice/ ./internal/ui/
-
-      # Западная зона сдвигает полночь UTC на предыдущий день — этот класс
-      # ошибок не виден ни в UTC, ни при прогоне в восточной зоне (#1212).
-      - name: Unit tests (западная зона)
-        if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
-        env:
-          TZ: America/New_York
-        run: go test -count=1 ./internal/storage/ ./internal/query/ ./internal/entityservice/ ./internal/ui/
 
       - name: Coverage summary
         if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
