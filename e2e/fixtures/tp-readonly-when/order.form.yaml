@@ -1,0 +1,21 @@
+schema: onebase.form/v1
+form:
+  name: ФормаОбъекта
+  kind: object
+  entity: Orders
+elements:
+  - kind: ПолеВвода
+    name: ПолеСтатус
+    data_path: Объект.Status
+    events: {ПриИзменении: StatusChanged}
+  - kind: ТабличнаяЧасть
+    name: TabLines
+    data_path: Объект.Lines
+    children:
+      - kind: Колонка
+        name: ColProduct
+        data_path: Объект.Lines.Product
+      - kind: Колонка
+        name: ColQty
+        data_path: Объект.Lines.Qty
+        readonly_when: 'Status = "Closed"'
