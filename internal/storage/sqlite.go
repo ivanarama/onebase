@@ -28,7 +28,8 @@ func init() {
 	// Общий UTC-ключ нужен только для их сравнений с параметром-моментом.
 	// Фиксированная дробная часть сохраняет порядок и точность; datetime() и
 	// julianday() SQLite округляют дробные секунды.
-	sqlite.MustRegisterDeterministicScalarFunction("ob_utc_datetime", 1, func(_ *sqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
+	// Даты без смещения зависят от time.Local, как и ob_local_datetime.
+	sqlite.MustRegisterScalarFunction("ob_utc_datetime", 1, func(_ *sqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
 		if len(args) != 1 || args[0] == nil {
 			return nil, nil
 		}
@@ -41,10 +42,8 @@ func init() {
 		default:
 			return nil, nil
 		}
-		for _, layout := range []string{sqliteTimeLayout, time.RFC3339Nano} {
-			if parsed, err := time.Parse(layout, value); err == nil {
-				return parsed.UTC().Format("2006-01-02 15:04:05.000000000"), nil
-			}
+		if parsed, ok := ParseRegPeriod(value); ok {
+			return SQLiteDateComparisonKey(parsed), nil
 		}
 		return nil, nil
 	})
