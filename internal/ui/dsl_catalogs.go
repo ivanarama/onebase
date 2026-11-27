@@ -126,6 +126,7 @@ func (f *catFactory) LoadCatalogObject(entity *metadata.Entity, uuidStr string) 
 	if !ok {
 		return nil, fmt.Errorf("объект %s/%s: не прочитана версия", entity.Name, id)
 	}
+	obj.DeletionMark = asBool(row["deletion_mark"])
 	return &catWriter{
 		s: f.s, ctxSrc: f.ctxSrc, entity: entity, obj: obj, loaded: true,
 		expectedVersion: &version,
@@ -160,6 +161,9 @@ type catWriter struct {
 	// маскируется, значение принадлежит текущей операции (план 88E).
 	assigned map[string]bool
 	resolver *dslRefAttrResolver
+	// pendingMark — ПометкаУдаления, присвоенная модулем: применяется после
+	// Записать() (раньше присваивание молча терялось).
+	pendingMark *bool
 }
 
 func (w *catWriter) ctx() context.Context {
@@ -194,6 +198,12 @@ func (w *catWriter) Get(name string) any {
 		if isSelfRefName(name) {
 			return w.selfRef(v)
 		}
+		if isDeletionMarkName(name) {
+			if w.pendingMark != nil {
+				return *w.pendingMark
+			}
+			return w.obj.DeletionMark
+		}
 		return v
 	}
 	maskStored := w.loaded && !w.assigned[strings.ToLower(strings.TrimSpace(name))]
@@ -227,6 +237,11 @@ func (w *catWriter) selfRef(stored any) any {
 }
 
 func (w *catWriter) Set(name string, v any) {
+	if isDeletionMarkName(name) && findObjectAttributeField(w.entity, name) == nil {
+		mark := asBool(v)
+		w.pendingMark = &mark
+		return
+	}
 	if w.assigned == nil {
 		w.assigned = map[string]bool{}
 	}
@@ -235,6 +250,9 @@ func (w *catWriter) Set(name string, v any) {
 }
 
 func (w *catWriter) GetDynamicField(name string) (any, bool) {
+	if w != nil && w.entity != nil && w.obj != nil && isDeletionMarkName(name) && findObjectAttributeField(w.entity, name) == nil {
+		return w.Get(name), true
+	}
 	if w == nil || w.entity == nil || w.obj == nil || findObjectAttributeField(w.entity, name) == nil {
 		return nil, false
 	}
@@ -242,6 +260,10 @@ func (w *catWriter) GetDynamicField(name string) (any, bool) {
 }
 
 func (w *catWriter) SetDynamicField(name string, value any) bool {
+	if w != nil && w.entity != nil && w.obj != nil && isDeletionMarkName(name) && findObjectAttributeField(w.entity, name) == nil {
+		w.Set(name, value)
+		return true
+	}
 	if w == nil || w.entity == nil || w.obj == nil || findObjectAttributeField(w.entity, name) == nil {
 		return false
 	}
@@ -273,7 +295,25 @@ func (w *catWriter) CallMethod(method string, args []any) any {
 		if err := w.write(); err != nil {
 			interpreter.RaiseUserError("Записать(" + w.entity.Name + "): " + err.Error())
 		}
+		if err := w.applyPendingMark(); err != nil {
+			interpreter.RaiseUserError("Записать(" + w.entity.Name + "): пометка удаления: " + err.Error())
+		}
 		return w.ref()
+	case "установитьпометкуудаления", "setdeletionmark":
+		if len(args) == 0 {
+			interpreter.RaiseUserError("УстановитьПометкуУдаления(" + w.entity.Name + "): не передана пометка")
+		}
+		if !w.loaded && !w.saved {
+			if err := w.write(); err != nil {
+				interpreter.RaiseUserError("УстановитьПометкуУдаления(" + w.entity.Name + "): " + err.Error())
+			}
+		}
+		mark := asBool(args[0])
+		w.pendingMark = &mark
+		if err := w.applyPendingMark(); err != nil {
+			interpreter.RaiseUserError("УстановитьПометкуУдаления(" + w.entity.Name + "): " + err.Error())
+		}
+		return nil
 	case "установитьзначение", "setvalue":
 		if len(args) >= 2 {
 			if n, ok := args[0].(string); ok {
@@ -302,6 +342,20 @@ func (w *catWriter) CallMethod(method string, args []any) any {
 // deleteIfUnchanged binds physical deletion to the revision captured by
 // ПолучитьОбъект(). It is intended for background cleanup code that first
 // checks fields and must not delete a state written after that check.
+// applyPendingMark применяет присвоенную ПометкаУдаления к записанному элементу.
+func (w *catWriter) applyPendingMark() error {
+	if w.pendingMark == nil {
+		return nil
+	}
+	mark := *w.pendingMark
+	if err := w.s.dslSetDeletionMark(w.ctx(), w.entity, w.obj.ID, mark); err != nil {
+		return err
+	}
+	w.pendingMark = nil
+	w.obj.DeletionMark = mark
+	return nil
+}
+
 func (w *catWriter) deleteIfUnchanged() error {
 	if (!w.loaded && !w.saved) || w.expectedVersion == nil {
 		return fmt.Errorf("объект ещё не прочитан или не записан")

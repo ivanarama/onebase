@@ -633,6 +633,9 @@ type docWriter struct {
 	// отдельного состояния Д.Проведен читался как Неопределено.
 	posted       bool
 	deletionMark bool
+	// pendingMark — ПометкаУдаления, присвоенная модулем: применяется после
+	// Записать() (раньше присваивание молча терялось).
+	pendingMark *bool
 }
 
 // runtimeObject exposes identity for Заполнить; Fill reloads persisted data.
@@ -650,9 +653,9 @@ func (w *docWriter) setStandardAttrs(row map[string]any) {
 	w.deletionMark = asBool(row["deletion_mark"])
 }
 
-// standardAttr отдаёт стандартный реквизит документа по имени. Реквизит только
-// для чтения: его меняют Провести(), ОтменитьПроведение() и пометка на удаление,
-// а присваивание, как и раньше, в базу не попадает.
+// standardAttr отдаёт стандартный реквизит документа по имени. Проведен меняют
+// Провести()/ОтменитьПроведение(); ПометкаУдаления — присваивание с последующим
+// Записать(), УстановитьПометкуУдаления() и менеджер.
 func (w *docWriter) standardAttr(name string) (any, bool) {
 	switch strings.ToLower(strings.TrimSpace(name)) {
 	case "проведен", "проведён", "posted":
@@ -735,6 +738,11 @@ func (w *docWriter) selfRef(stored any) any {
 }
 
 func (w *docWriter) Set(name string, v any) {
+	if isDeletionMarkName(name) && findObjectAttributeField(w.entity, name) == nil {
+		mark := asBool(v)
+		w.pendingMark, w.deletionMark = &mark, mark
+		return
+	}
 	if w.assigned == nil {
 		w.assigned = map[string]bool{}
 	}
@@ -753,6 +761,10 @@ func (w *docWriter) GetDynamicField(name string) (any, bool) {
 }
 
 func (w *docWriter) SetDynamicField(name string, value any) bool {
+	if w != nil && w.entity != nil && w.obj != nil && isDeletionMarkName(name) && findObjectAttributeField(w.entity, name) == nil {
+		w.Set(name, value)
+		return true
+	}
 	if w == nil || w.entity == nil || w.obj == nil || findObjectAttributeField(w.entity, name) == nil {
 		return false
 	}
@@ -766,12 +778,36 @@ func (w *docWriter) CallMethod(method string, args []any) any {
 		if err := w.write(); err != nil {
 			interpreter.RaiseUserError("Записать(" + w.entity.Name + "): " + err.Error())
 		}
+		if err := w.applyPendingMark(); err != nil {
+			interpreter.RaiseUserError("Записать(" + w.entity.Name + "): пометка удаления: " + err.Error())
+		}
 		return w.ref()
 	case "провести", "post":
+		if w.pendingMark != nil && *w.pendingMark {
+			interpreter.RaiseUserError("Провести(" + w.entity.Name + "): помеченный на удаление документ провести нельзя")
+		}
 		if err := w.conduct(); err != nil {
 			interpreter.RaiseUserError("Провести(" + w.entity.Name + "): " + err.Error())
 		}
+		if err := w.applyPendingMark(); err != nil {
+			interpreter.RaiseUserError("Провести(" + w.entity.Name + "): пометка удаления: " + err.Error())
+		}
 		return w.ref()
+	case "установитьпометкуудаления", "setdeletionmark":
+		if len(args) == 0 {
+			interpreter.RaiseUserError("УстановитьПометкуУдаления(" + w.entity.Name + "): не передана пометка")
+		}
+		if !w.loaded && !w.saved {
+			if err := w.write(); err != nil {
+				interpreter.RaiseUserError("УстановитьПометкуУдаления(" + w.entity.Name + "): " + err.Error())
+			}
+		}
+		mark := asBool(args[0])
+		w.pendingMark = &mark
+		if err := w.applyPendingMark(); err != nil {
+			interpreter.RaiseUserError("УстановитьПометкуУдаления(" + w.entity.Name + "): " + err.Error())
+		}
+		return nil
 	case "заполнить", "fill":
 		if len(args) == 0 {
 			interpreter.RaiseUserError("Заполнить(" + w.entity.Name + "): не передано основание")
@@ -793,6 +829,24 @@ func (w *docWriter) CallMethod(method string, args []any) any {
 			interpreter.RaiseUserError("Прочитать(" + w.entity.Name + "): " + err.Error())
 		}
 		return nil
+	}
+	return nil
+}
+
+// applyPendingMark применяет присвоенную ПометкаУдаления к записанному
+// документу. Пометка проведённого снимает проведение (markForDeletion).
+func (w *docWriter) applyPendingMark() error {
+	if w.pendingMark == nil {
+		return nil
+	}
+	mark := *w.pendingMark
+	if err := w.s.dslSetDeletionMark(w.ctx(), w.entity, w.obj.ID, mark); err != nil {
+		return err
+	}
+	w.pendingMark, w.deletionMark = nil, mark
+	w.obj.DeletionMark = mark
+	if mark {
+		w.posted = false
 	}
 	return nil
 }
