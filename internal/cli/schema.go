@@ -195,13 +195,15 @@ func allSchemas() map[string]map[string]any {
 		"additionalProperties": false,
 		"required":             []string{"name", "type"},
 		"properties": map[string]any{
-			"name":       stringSchema("Имя параметра"),
-			"type":       stringSchema("Тип параметра"),
-			"label":      stringSchema("Подпись"),
-			"labels":     stringMapSchema(),
-			"default":    stringSchema("Значение параметра по умолчанию"),
-			"options":    arrayOf(stringSchema("Значение")),
-			"period_end": boolSchema("Для type: date — использовать конец выбранного дня (23:59:59)"),
+			"name":                stringSchema("Имя параметра"),
+			"type":                stringSchema("Тип параметра"),
+			"label":               stringSchema("Подпись"),
+			"labels":              stringMapSchema(),
+			"default":             stringSchema("Значение параметра по умолчанию"),
+			"options":             arrayOf(stringSchema("Значение")),
+			"period_end":          boolSchema("Для type: date — использовать конец выбранного дня (23:59:59)"),
+			"choice_label_suffix": stringSchema("Ссылочный реквизит: добавить представление в скобках к подписи выбора"),
+			"choice_filter":       arrayOf(map[string]any{"type": "object", "additionalProperties": false, "required": []string{"field", "param"}, "properties": map[string]any{"field": stringSchema("Ссылочный реквизит выбора"), "param": stringSchema("Ведущий параметр отчёта; пустой не ограничивает выбор")}}),
 		},
 	}
 	// Параметр ОБРАБОТКИ знает обязательность, параметр отчёта — нет

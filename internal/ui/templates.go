@@ -3109,7 +3109,7 @@ const tplReport = `
         </select>
       {{else if $p.IsRef}}
         <div style="display:flex;gap:4px;align-items:center">
-          <select name="{{$pname}}" id="rp-{{$pname}}" style="flex:1;min-width:0" data-ref-entity="{{$p.RefEntity}}">
+          <select name="{{$pname}}" id="rp-{{$pname}}" style="flex:1;min-width:0" data-ref-entity="{{$p.RefEntity}}"{{with $p.ChoiceContext $.Report.Name}} data-ref-choice-context="{{.}}"{{end}}>
             <option value="">{{t $.Lang "— все —"}}</option>
             {{range $p.Opts}}
               <option value="{{index . "id"}}"{{refOptionStyle .}} {{if eq $pval (str (index . "id"))}}selected{{end}}>{{index . "_label"}}</option>

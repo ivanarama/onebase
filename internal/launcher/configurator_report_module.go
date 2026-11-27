@@ -38,13 +38,15 @@ func (h *handler) configuratorSaveReport(w http.ResponseWriter, r *http.Request)
 	chartSource := r.FormValue("chart_source")
 
 	type saveParam struct {
-		Name      string            `yaml:"name"`
-		Type      string            `yaml:"type"`
-		Label     string            `yaml:"label,omitempty"`
-		Labels    map[string]string `yaml:"labels,omitempty"`
-		Default   *string           `yaml:"default,omitempty"`
-		Options   *[]string         `yaml:"options,omitempty"`
-		PeriodEnd *bool             `yaml:"period_end,omitempty"`
+		ChoiceFilter      []report.ParamChoiceFilter `yaml:"choice_filter,omitempty"`
+		ChoiceLabelSuffix string                     `yaml:"choice_label_suffix,omitempty"`
+		Name              string                     `yaml:"name"`
+		Type              string                     `yaml:"type"`
+		Label             string                     `yaml:"label,omitempty"`
+		Labels            map[string]string          `yaml:"labels,omitempty"`
+		Default           *string                    `yaml:"default,omitempty"`
+		Options           *[]string                  `yaml:"options,omitempty"`
+		PeriodEnd         *bool                      `yaml:"period_end,omitempty"`
 	}
 	type saveReport struct {
 		Name        string              `yaml:"name"`
@@ -116,6 +118,8 @@ func (h *handler) configuratorSaveReport(w http.ResponseWriter, r *http.Request)
 			params[i].Default = previous.Default
 			params[i].Options = previous.Options
 			params[i].PeriodEnd = previous.PeriodEnd
+			params[i].ChoiceFilter = previous.ChoiceFilter
+			params[i].ChoiceLabelSuffix = previous.ChoiceLabelSuffix
 		}
 		if err := setYAMLMapField(doc, "query", query); err != nil {
 			return nil, err
