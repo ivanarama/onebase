@@ -1708,7 +1708,12 @@ aside details.navsec>summary:hover{color:#cbd5e1}
 aside details.navfolder{margin-left:12px}
 aside details.navfolder>summary{text-transform:none;font-size:12px;margin-top:8px}
 aside .navfolder-title{margin-left:12px;text-transform:none}
-aside .navfolder-items>a{padding-left:26px}
+aside .navfolder-items>a,aside .navfolder-items>.nav-list-row>a:first-child{padding-left:26px}
+#ob-nav .nav-list-row{display:flex;align-items:center;gap:3px;padding-right:8px}
+#ob-nav .nav-list-row>a:first-child{flex:1;min-width:0;margin-right:0}
+#ob-nav .nav-list-row>a.nav-list-create{display:grid;place-items:center;flex:none;width:18px;height:18px;padding:0;margin:0;border-radius:50%;background:#15803d;color:#fff;font-size:14px;font-weight:700;line-height:1}
+#ob-nav .nav-list-row>a.nav-list-create:hover{background:#166534}
+#ob-nav .nav-list-row>a.nav-list-create:focus-visible{outline:2px solid #7dd3fc;outline-offset:2px}
 main{flex:1;padding:28px;overflow-y:auto;min-height:0;min-width:0}
 h2{font-size:22px;font-weight:600;margin-bottom:20px;color:#1e293b}
 h3{font-size:16px;font-weight:600;margin:24px 0 10px;color:#1e293b}
@@ -2038,8 +2043,11 @@ const tplNav = `
   {{end}}
 </aside>
 {{end}}
-{{define "nav-items"}}{{range .}}<a href="{{.URL}}" title="{{.Label}}" id="{{.DOMID}}" data-nav-id="{{.ID}}">{{lucideIcon .Icon}}{{navLabel .Label}}</a>
+{{define "nav-items"}}{{range .}}{{template "nav-item-link" .}}
 {{end}}{{end}}
+{{define "nav-item-link"}}
+{{if .CreateURL}}<div class="nav-list-row">{{end}}<a href="{{.URL}}" title="{{.Label}}" id="{{.DOMID}}" data-nav-id="{{.ID}}">{{lucideIcon .Icon}}{{navLabel .Label}}</a>{{if .CreateURL}}<a class="nav-list-create" data-nav-list-create="1" href="{{.CreateURL}}" title="{{.CreateTitle}}" aria-label="{{.CreateTitle}}">+</a></div>{{end}}
+{{end}}
 `
 
 const tplIndex = `

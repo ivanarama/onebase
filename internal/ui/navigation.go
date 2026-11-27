@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"maps"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 
@@ -19,6 +20,7 @@ import (
 
 type navItem struct {
 	ID, DOMID, Icon, Label, URL string
+	CreateURL, CreateTitle      string
 }
 
 type navFolder struct {
@@ -32,6 +34,22 @@ type navGroup struct {
 	Items                 []navItem
 	Groups                []navFolder
 	Open                  bool
+}
+
+const navListCreateParam = "_menu_create"
+
+// The secondary action belongs to an object list. Its own form request
+// checks create permission, independently of visibility of the list.
+func navListCreate(item navigation.ResolvedItem, subsystem, createLabel string) (string, string) {
+	if item.Action != "read" || (item.Kind != "catalog" && item.Kind != "document") {
+		return "", ""
+	}
+	q := url.Values{navListCreateParam: {"1"}}
+	if subsystem != "" {
+		q.Set("subsystem", subsystem)
+	}
+	u := url.URL{Path: "/ui/" + item.Kind + "/" + item.Name + "/new", RawQuery: q.Encode()}
+	return u.String(), createLabel + ": " + item.Label
 }
 
 func sortNavItems(items []navItem) {
@@ -425,7 +443,8 @@ func (s *Server) navigationGroups(r *http.Request, tree, base navigation.Tree, c
 			if !s.navigationItemVisible(r, item.Object, resolved, semantic, flat) {
 				continue
 			}
-			output = append(output, navItem{ID: item.ID, DOMID: navDOMID(context, item.ID), Icon: item.Icon, Label: resolved.Label, URL: resolved.URL})
+			createURL, createTitle := navListCreate(resolved, sub, translate("Создать"))
+			output = append(output, navItem{ID: item.ID, DOMID: navDOMID(context, item.ID), Icon: item.Icon, Label: resolved.Label, URL: resolved.URL, CreateURL: createURL, CreateTitle: createTitle})
 		}
 		if !semantic && flat {
 			sortNavItems(output)
