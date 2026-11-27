@@ -38,6 +38,10 @@ func TestSourceCostPublicCLIReceiptAndClosedFailures(t *testing.T) {
 	}
 	wrongViewer := data(1)
 	wrongViewer.Output = json.RawMessage(strings.Replace(string(wrongViewer.Output), `"login":"ivanarama"`, `"login":"other"`, 1))
+	aliasedErrors := data(1)
+	aliasedErrors.Output = json.RawMessage(strings.TrimSuffix(string(aliasedErrors.Output), "}") + `,"Errors":[{"message":"partial"}]}`)
+	aliasedData := data(1)
+	aliasedData.Output = json.RawMessage(strings.TrimSuffix(string(aliasedData.Output), "}") + `,"Data":null}`)
 	incomplete := graphQLRetryStep{Output: json.RawMessage(sourceCostResponse(t, 1, true))}
 	dense := data(1)
 	dense.Output = json.RawMessage(strings.Replace(string(dense.Output), `"data":{`,
@@ -60,6 +64,8 @@ func TestSourceCostPublicCLIReceiptAndClosedFailures(t *testing.T) {
 		{"budget stops before data", 1, []graphQLRetryStep{preview(1)}, 1, 75, false, false, 1, false},
 		{"errors null preview", 7, []graphQLRetryStep{nullErrors(preview(1))}, 1, 2, false, true, 7, false},
 		{"errors null data", 7, []graphQLRetryStep{preview(1), nullErrors(data(1))}, 2, 2, false, true, 2, false},
+		{"case aliased errors no partial receipt", 7, []graphQLRetryStep{preview(1), aliasedErrors}, 2, 2, false, true, 2, false},
+		{"case aliased data no partial receipt", 7, []graphQLRetryStep{preview(1), aliasedData}, 2, 2, false, true, 2, false},
 		{"gateway preview no retry", 7, []graphQLRetryStep{{Error: "gh: HTTP 504\n", Exit: 1}}, 1, 2, false, true, 7, false},
 		{"gateway data no retry", 7, []graphQLRetryStep{preview(1), {Error: "gh: HTTP 502\n", Exit: 1}}, 2, 2, false, true, 2, false},
 		{"actual exceeds quote", 7, []graphQLRetryStep{preview(1), data(2)}, 2, 2, false, true, 3, false},

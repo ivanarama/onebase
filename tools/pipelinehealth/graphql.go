@@ -377,9 +377,16 @@ func (client *ghPipelineGraphQLClient) queryUnmetered(query string, variables ma
 		}
 	}
 	if client.sourceCost != nil {
-		if err := validateSourceGraphQLEnvelope(stdout.Bytes()); err != nil {
+		data, err := decodeSourceGraphQLEnvelope(stdout.Bytes())
+		if err != nil {
 			return err
 		}
+		decoded, ok := destination.(*sourceGraphQLDecodedData)
+		if !ok || decoded == nil {
+			return fmt.Errorf("source GraphQL transport requires its validated data destination")
+		}
+		decoded.data = data
+		return nil
 	}
 	return decodePipelineGraphQLResponse(stdout.Bytes(), destination)
 }

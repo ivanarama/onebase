@@ -114,34 +114,41 @@ func sourceGraphQLCost(data map[string]any) (int64, error) {
 	return cost, nil
 }
 
-func sourceGraphQLData(raw json.RawMessage) (map[string]any, error) {
+// The central transport hands this already validated object directly to the
+// meter. Re-decoding a large envelope and its data would repeat the same strict
+// validation and copy the response without adding another trust boundary.
+type sourceGraphQLDecodedData struct {
+	data map[string]any
+}
+
+func decodeSourceGraphQLEnvelope(raw []byte) (map[string]any, error) {
 	value, err := sourceCostDecodeJSON(raw)
 	if err != nil {
 		return nil, err
 	}
-	data, ok := value.(map[string]any)
-	if !ok {
-		return nil, fmt.Errorf("source GraphQL data must be an object")
-	}
-	return data, nil
-}
-
-func validateSourceGraphQLEnvelope(raw []byte) error {
-	value, err := sourceCostDecodeJSON(raw)
-	if err != nil {
-		return err
-	}
 	envelope, ok := value.(map[string]any)
 	if !ok {
-		return fmt.Errorf("source GraphQL envelope must be an object")
+		return nil, fmt.Errorf("source GraphQL envelope must be an object")
+	}
+	// The legacy struct decoder matched envelope fields without case. Do not
+	// let a differently cased errors/data alias disappear in the map handoff.
+	for key := range envelope {
+		if (strings.EqualFold(key, "data") && key != "data") ||
+			(strings.EqualFold(key, "errors") && key != "errors") {
+			return nil, fmt.Errorf("source GraphQL envelope field %q is not canonical", key)
+		}
 	}
 	if rawErrors, present := envelope["errors"]; present {
 		items, valid := rawErrors.([]any)
 		if !valid || len(items) != 0 {
-			return fmt.Errorf("source GraphQL receipt requires an absent or empty errors array")
+			return nil, fmt.Errorf("source GraphQL receipt requires an absent or empty errors array")
 		}
 	}
-	return nil
+	data, ok := envelope["data"].(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("source GraphQL data must be an object")
+	}
+	return data, nil
 }
 
 // These queries are the complete central transport's closed query vocabulary.
@@ -202,15 +209,11 @@ func (client *ghPipelineGraphQLClient) queryWithSourceCost(query string, variabl
 	meter.escrow = held
 	meter.usage.PhysicalAttempts++
 	meter.usage.PreviewAttempts++
-	var raw json.RawMessage
-	if err := client.queryUnmetered(preview, variables, &raw); err != nil {
+	var decoded sourceGraphQLDecodedData
+	if err := client.queryUnmetered(preview, variables, &decoded); err != nil {
 		return meter.unproved(held, "unproved_preview")
 	}
-	previewData, err := sourceGraphQLData(raw)
-	if err != nil {
-		return meter.unproved(held, "unproved_preview")
-	}
-	quote, err := sourceGraphQLCost(previewData)
+	quote, err := sourceGraphQLCost(decoded.data)
 	if err != nil {
 		return meter.unproved(held, "unproved_preview")
 	}
@@ -230,13 +233,10 @@ func (client *ghPipelineGraphQLClient) queryWithSourceCost(query string, variabl
 	meter.escrow = quote
 	meter.usage.PhysicalAttempts++
 	meter.usage.DataAttempts++
-	if err := client.queryUnmetered(dataQuery, variables, &raw); err != nil {
+	if err := client.queryUnmetered(dataQuery, variables, &decoded); err != nil {
 		return meter.unproved(quote, "unproved_data")
 	}
-	data, err := sourceGraphQLData(raw)
-	if err != nil {
-		return meter.unproved(quote, "unproved_data")
-	}
+	data := decoded.data
 	actual, err := sourceGraphQLCost(data)
 	if err != nil {
 		return meter.unproved(quote, "unproved_data")

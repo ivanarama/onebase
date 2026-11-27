@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -279,6 +280,94 @@ func TestSourceCostPreservesExisting64MiBResponseBound(t *testing.T) {
 	var data map[string]any
 	if err := client.Query(routingRepositoryQuery, nil, &data); err != nil || !meter.receipt(true).Complete {
 		t.Fatalf("cost parser replaced existing64MiB transport bound with8MiB: %v", err)
+	}
+}
+
+func TestSourceCostValidatedDataPreservesCanonicalDestination(t *testing.T) {
+	for _, typed := range []bool{false, true} {
+		t.Run(map[bool]string{false: "map", true: "typed"}[typed], func(t *testing.T) {
+			meter := sourceTestMeter(t, 4)
+			payload := `{"repository":{"id":"R_onebase","count":7,"nullable":null,"nodes":[{"id":"n1"}]}}`
+			var expected, actual any
+			if typed {
+				type node struct{ ID string }
+				type repository struct {
+					ID       string
+					Count    int
+					Nullable *string
+					Nodes    []node
+				}
+				type response struct{ Repository repository }
+				expected, actual = &response{}, &response{}
+			} else {
+				expected, actual = &map[string]any{}, &map[string]any{}
+			}
+			if err := json.Unmarshal([]byte(payload), expected); err != nil {
+				t.Fatal(err)
+			}
+			client := sourceTestClient(meter, func(_ context.Context, _ string, input []byte, stdout, _ io.Writer) error {
+				if strings.Contains(string(input), "dryRun: true") {
+					_, _ = io.WriteString(stdout, sourceCostResponse(t, 1, false))
+				} else {
+					_, _ = io.WriteString(stdout, `{"data":`+strings.TrimSuffix(payload, "}")+`,"ppSourceGraphqlRate":{"cost":1},"ppSourceGraphqlViewer":{"login":"ivanarama"}},"errors":[]}`)
+				}
+				return nil
+			})
+			if err := client.Query(routingRepositoryQuery, nil, actual); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(actual, expected) || !meter.receipt(true).Complete {
+				t.Fatalf("validated data changed canonical destination: got=%#v want=%#v", actual, expected)
+			}
+		})
+	}
+}
+
+func TestSourceCostValidatedEnvelopeRejectsNonObjectData(t *testing.T) {
+	for _, raw := range []string{`{}`, `{"data":null}`, `{"data":[]}`, `{"data":true}`, `{"data":"object"}`} {
+		t.Run(raw, func(t *testing.T) {
+			meter := sourceTestMeter(t, 4)
+			client := sourceTestClient(meter, func(_ context.Context, _ string, _ []byte, stdout, _ io.Writer) error {
+				_, _ = io.WriteString(stdout, raw)
+				return nil
+			})
+			destination := map[string]any{"unchanged": true}
+			if err := client.Query(routingRepositoryQuery, nil, &destination); err == nil ||
+				!reflect.DeepEqual(destination, map[string]any{"unchanged": true}) {
+				t.Fatalf("invalid envelope populated destination: err=%v data=%v", err, destination)
+			}
+			usage := meter.receipt(false)
+			if !usage.UncertainCost || usage.Complete || usage.PhysicalAttempts != 1 || usage.UnprovedAttempts != 1 {
+				t.Fatalf("invalid data escaped the strict envelope boundary: %+v", usage)
+			}
+		})
+	}
+}
+
+func TestSourceCostValidatedEnvelopeCannotHideCaseAliases(t *testing.T) {
+	for _, field := range []string{`"Errors":[{"message":"partial"}]`, `"ERRORS":[]`, `"Data":{}`, `"DATA":null`} {
+		t.Run(field, func(t *testing.T) {
+			meter := sourceTestMeter(t, 4)
+			calls := 0
+			client := sourceTestClient(meter, func(_ context.Context, _ string, input []byte, stdout, _ io.Writer) error {
+				calls++
+				if strings.Contains(string(input), "dryRun: true") {
+					_, _ = io.WriteString(stdout, sourceCostResponse(t, 1, false))
+				} else {
+					_, _ = io.WriteString(stdout, strings.TrimSuffix(sourceCostResponse(t, 1, true), "}")+","+field+"}")
+				}
+				return nil
+			})
+			data := map[string]any{"unchanged": true}
+			if err := client.Query(routingRepositoryQuery, nil, &data); err == nil ||
+				!reflect.DeepEqual(data, map[string]any{"unchanged": true}) {
+				t.Fatalf("envelope alias hid an error or replaced canonical data: err=%v data=%v", err, data)
+			}
+			usage := meter.receipt(false)
+			if calls != 2 || usage.Complete || !usage.UncertainCost || usage.UnprovedAttempts != 1 {
+				t.Fatalf("case alias produced a trusted receipt: %+v", usage)
+			}
+		})
 	}
 }
 
