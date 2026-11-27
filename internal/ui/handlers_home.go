@@ -261,7 +261,7 @@ func refreshableWidgetType(t metadata.WidgetType) bool {
 }
 
 func (s *Server) decorateRefreshResult(r *http.Request, wMeta *metadata.Widget, res *widget.Result, runner *widget.Runner) {
-	if res == nil || !refreshableWidgetType(metadata.WidgetType(res.Type)) {
+	if res == nil || res.AccessDenied || !refreshableWidgetType(metadata.WidgetType(res.Type)) {
 		return
 	}
 	subsystem := r.URL.Query().Get("subsystem")
