@@ -696,6 +696,11 @@ qualified-ссылка на другой repository локальной issue н�
      интеграционного REVIEW нельзя; повторный человеческий `ship` при валидной
      carry-цепочке не нужен.
    - **CLEAN + требуемые проверки зелёные** → мерж (п. 5).
+   - **UNSTABLE из-за одного упавшего `bench` при уже опубликованном обычном
+     `pp:merge-cleanup-intent`** обрабатывает [`pipelinectl`](../SKILL.md).
+     Продолжать этот intent разрешает его ответ `action=merge` после проверки
+     точного HEAD, актуального `main` и обязательных проверок. При `wait`
+     передай причину ожидания из ответа CLI. Ручной PUT в этой ветке запрещён.
 
 4. Для текущего HEAD сверь обязательные проверки с `.github/branch-protection.json`:
    `build`, `lint`, `postgres-integration`, `vuln`, `smoke`, `e2e`,

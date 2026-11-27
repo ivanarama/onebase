@@ -55,8 +55,8 @@ python -m promptpilot.project_pipeline --config pipelinectl.json next merge
   [references/legacy-protocol.md](references/legacy-protocol.md) и продолжи по нему;
 - `error` — закончи `ИТОГ: НЕ СМОГ`, не обходя отказ вручную.
 
-`pipelinectl` берёт быстрый путь только для `CLEAN` PR с каноничным обычным
-либо совместимым положительным typed review-proof, trusted `ship` и зелёными
+`pipelinectl` начинает слияние по быстрому пути только для `CLEAN` PR с каноничным
+обычным либо совместимым положительным typed review-proof, trusted `ship` и зелёными
 обязательными проверками. Typed ticket имеет purpose, HMAC, конечный срок,
 полную identity/source, config и SHA-256 четырёх reader trees. Его native путь
 также проверяет, что HEAD содержит текущий main, а все обязательные проверки
@@ -68,9 +68,16 @@ CI-гейты. Для typed источника перед PUT расходует
 инженерного readback, а не второго PUT. Typed BEHIND ждёт нового независимого
 content REVIEW свежего HEAD: legacy carry ему разрешений не добавляет.
 
-До merge CLI публикует точный `pp:merge-cleanup-intent`. Если процесс оборвался
-после успешного merge, следующий запуск находит intent вне списка открытых PR и
-возвращает `action=cleanup`: проверяет серверный `MergedEvent`, снимает
+До merge CLI публикует точный `pp:merge-cleanup-intent`. При восстановлении
+открытого PR с обычным review-proof `pipelinectl` может продолжить этот intent
+при `UNSTABLE`. Для этого PR должен быть `MERGEABLE`, HEAD должен совпадать с
+intent и содержать текущий `main`. Все восемь обязательных проверок GitHub Actions
+должны успешно завершиться на этом HEAD. Единственная причина `UNSTABLE` в
+полном списке результатов — завершившийся с ошибкой необязательный `bench`.
+Перед merge PUT CLI проверяет эти условия повторно вместе с proof и trusted `ship`.
+
+Если процесс оборвался после успешного merge, следующий запуск находит intent
+вне списка открытых PR и возвращает `action=cleanup`: проверяет серверный `MergedEvent`, снимает
 `in-work` только с закрытых same-repository issues, идемпотентно завершает
 PLAN-handoff, снимает `ship` и последним пишет `pp:merge-cleanup-done`.
 Обычная очередь не продолжается, пока самый ранний intent не завершён или не
