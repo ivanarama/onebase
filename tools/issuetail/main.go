@@ -12,7 +12,7 @@
 //
 //	go run ./tools/issuetail            # заявки, чьё закрытие заявлено во влитом PR
 //	go run ./tools/issuetail -all       # плюс просто упоминания (шумно)
-//	go run ./tools/issuetail -limit 400 # глубже по истории PR
+//	go run ./tools/issuetail -limit 400 # больше открытых заявок и влитых PR
 //
 // Данные берутся через gh CLI из текущего репозитория; авторизация — та же, что
 // у `gh`. Для отладки и тестов вход можно подменить файлами:
@@ -211,7 +211,7 @@ func closingSpan(line string, from, n int) int {
 
 func main() {
 	var (
-		limit      = flag.Int("limit", 200, "сколько влитых PR просмотреть")
+		limit      = flag.Int("limit", 200, "сколько открытых заявок и сколько влитых PR запросить у GitHub")
 		all        = flag.Bool("all", false, "показать и просто упоминания")
 		issuesPath = flag.String("issues", "", "файл с JSON заявок вместо вызова gh")
 		prsPath    = flag.String("prs", "", "файл с JSON влитых PR вместо вызова gh")
@@ -224,10 +224,12 @@ func main() {
 		os.Exit(2)
 	}
 
+	fmt.Print(limitWarning("открытых заявок", *issuesPath, len(issues), *limit))
+	fmt.Print(limitWarning("влитых PR", *prsPath, len(prs), *limit))
 	declared, mentioned := analyze(issues, prs)
 
 	if len(declared) == 0 {
-		fmt.Printf("issuetail: хвоста нет — среди %d открытых заявок ни одна не заявлена закрытой во влитом PR\n", len(issues))
+		fmt.Printf("issuetail: в просмотренных данных нет заявленного закрытия открытой заявки (заявок: %d, влитых PR: %d)\n", len(issues), len(prs))
 	} else {
 		fmt.Printf("issuetail: заявлено закрытие, но заявка открыта — %d\n\n", len(declared))
 		for _, f := range declared {
@@ -246,6 +248,13 @@ func main() {
 			fmt.Printf("  #%-5d %-60.60s ← PR #%d\n", f.issue.Number, f.issue.Title, f.pr.Number)
 		}
 	}
+}
+
+func limitWarning(kind, path string, count, limit int) string {
+	if path == "" && count >= limit {
+		return fmt.Sprintf("внимание: достигнут -limit (%d) для %s, часть могла не попасть в отчёт\n", limit, kind)
+	}
+	return ""
 }
 
 // reason объясняет, почему заявка осталась открытой: русская фраза GitHub'у
