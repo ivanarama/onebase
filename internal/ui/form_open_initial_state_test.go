@@ -64,7 +64,12 @@ func TestFormOpenFillIsInitialState_Object(t *testing.T) {
 }
 
 func TestFormOpenFillIsInitialState_Processor(t *testing.T) {
+	// Склад размещён на форме: значение параметра без элемента ответ события
+	// открытым текстом не отдаёт (оно едет запечатанным состоянием,
+	// processor_form_carry.go), а тест читает именно values.
 	form := processorExecutionForm(&metadata.FormElement{
+		Kind: metadata.FormElementField, Name: "ПолеСклад", DataPath: "Объект.Склад",
+	}, &metadata.FormElement{
 		Kind: metadata.FormElementButton, Name: "Команда",
 		Handlers: map[metadata.FormEventType]string{metadata.FormEventOnClick: "КомандаНажатие"},
 	})
