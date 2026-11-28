@@ -176,7 +176,7 @@ func (s *Server) issueConcealInstance(w http.ResponseWriter, r *http.Request, en
 	}
 	owner, ok := concealOwner(r)
 	if !ok && auth.UserFromContext(r.Context()) == nil {
-		cookie := &http.Cookie{Name: "onebase_conceal_session", Value: uuid.NewString(), Path: "/", HttpOnly: true, Secure: r.TLS != nil, SameSite: http.SameSiteStrictMode}
+		cookie := &http.Cookie{Name: "onebase_conceal_session", Value: uuid.NewString(), Path: "/", HttpOnly: true, Secure: auth.SecureCookiesForRequest(r), SameSite: http.SameSiteStrictMode}
 		http.SetCookie(w, cookie)
 		r = r.Clone(r.Context())
 		r.AddCookie(cookie)
