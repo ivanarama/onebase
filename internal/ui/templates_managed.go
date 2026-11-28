@@ -238,8 +238,11 @@ const tplManagedForm = `
     <label>{{fieldTitleRU $el.TitleMap $fn}}{{if $effectiveReq}} <span style="color:#dc2626">*</span>{{end}}{{if and $el.Hint (not $el.HintInline)}} <span class="ob-hint" title="{{$el.Hint}}" aria-label="{{$el.Hint}}">ⓘ</span>{{end}}</label>
     <select name="{{$fn}}"{{if and $req (not $ro)}} required{{end}}{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if and $roUnlockable (hasHandler $el "НачалоВыбора")}} data-el="{{$el.Name}}" data-ob-list-choice="{{$el.Name}}"{{end}}{{if $ro}} disabled{{end}}{{if and $roUnlockable $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>
       <option value="">{{if $ro}}—{{else}}— выбрать —{{end}}</option>
-      {{range index $ctx.ChoiceOptions $el.Name}}
-      <option value="{{.Value}}" {{if eq .Value (index $ctx.Values $fn)}}selected{{end}}>{{.Label}}</option>
+      {{/* Текущее значение, которого нет среди вариантов (список строит
+           НачалоВыбора, или вариант убрали), выводится выбранным: иначе форма
+           отправляла пустое и запись стирала сохранённое значение. */}}
+      {{range choiceOptionsWithCurrent (index $ctx.ChoiceOptions $el.Name) (index $ctx.Values $fn)}}
+      <option value="{{.Value}}" {{if eq .Value (str (index $ctx.Values $fn))}}selected{{end}}>{{.Label}}</option>
       {{end}}
     </select>
     {{if and $el.Hint $el.HintInline}}<small style="color:#94a3b8;font-size:11px">{{$el.Hint}}</small>{{end}}
