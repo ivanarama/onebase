@@ -11,11 +11,18 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/ivantit66/onebase/internal/auth"
+	"github.com/ivantit66/onebase/internal/dbtest"
 	"github.com/ivantit66/onebase/internal/metadata"
+	"github.com/ivantit66/onebase/internal/storage"
 	"github.com/stretchr/testify/require"
 )
 
 func TestUI_DocumentLists_ValueQueryBeforeCountAndPage(t *testing.T) {
+	dbtest.ForEachDialect(t, checkDocumentListValueQueryBeforeCountAndPage)
+}
+
+func checkDocumentListValueQueryBeforeCountAndPage(t *testing.T, db *storage.DB) {
+	t.Helper()
 	department := &metadata.Entity{Name: "FilterDepartment", Kind: metadata.KindCatalog}
 	departmentField := metadata.Field{Name: "Подразделение", Type: metadata.FieldTypeString, RefEntity: department.Name}
 	assignments := &metadata.Entity{Name: "FilterAssignment", Kind: metadata.KindCatalog, Fields: []metadata.Field{
@@ -39,7 +46,8 @@ func TestUI_DocumentLists_ValueQueryBeforeCountAndPage(t *testing.T) {
 		entities = append(entities, doc)
 		docs = append(docs, doc)
 	}
-	s, ctx := newSubmitTestServer(t, entities)
+	s := newSubmitTestServerOn(t, db, entities)
+	ctx := t.Context()
 	own, other := uuid.New(), uuid.New()
 	for _, dept := range []uuid.UUID{own, other} {
 		require.NoError(t, s.store.Upsert(ctx, department.Name, dept, nil, department))
